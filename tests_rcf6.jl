@@ -5,18 +5,28 @@
 #############################################################################
 
 using VegaLite
-
+using JLD
 
 
 Nd = 50  # variable size to estimate
 Nh = 10  # number of hidden units
 Ne = 5   # number of mixture elements
 
-include("setup7.jl")
+include("setup8.jl")
 
 
-function sgd(pars₀, f, df!;
-             dat=train_set,
+score(pars::Pars, dat, f=xloglik) = mean(xloglik(dat[:,j], pars)[1] for j in 1:size(dat,2))
+score_train(pars::Pars) = score(pars, train_set)
+score_test(pars::Pars) =  score(pars, test_set)
+
+score_train
+
+function sgd(pars₀;
+             f::Function = xloglik,
+             df!::Function = xdloglik!,
+             dat = train_set,
+            #  score_test::Function =  score_test,
+            #  score_train::Function = score_train,
              maxtime=10, maxsteps=1000, chunksize=100,
              kscale=1e-4, cbinterval=100, k0=1e-3)
 
@@ -61,6 +71,8 @@ function sgd(pars₀, f, df!;
     pars
 end
 
+sgd2(pars)
+
 ###########  read data
 
 (dat0, hdr) = readcsv("c:/temp/rcf_matrix.csv", header=true)
@@ -94,8 +106,32 @@ test_set  = dat1[:, ids[3501:end]]
 ### alternative pour test
 
 train_set = 0.5 * ones(50,500)
-test_set  = 0.5 * ones(50,100)
+train_set .+= cumsum(rand(Normal(0.,0.01),50,500),1)
+clamp!(train_set, 0.001, 0.999)
 
+test_set  = 0.5 * ones(50,100)
+test_set .+= cumsum(rand(Normal(0.,0.01),50,100),1)
+clamp!(test_set, 0.001, 0.999)
+
+### alternative pour test
+
+function draw()
+    if rand() > 0.5
+        xs = sin.( linspace(0,pi,50) )
+    else
+        x0 = rand()
+        xs = x0 * exp.( linspace(0,-3,50) )
+    end
+    xs += cumsum(rand(Normal(0.,0.01), 50))
+    clamp!(xs, 0.001, 0.999)
+    xs
+end
+
+train_set = hcat( [draw() for i in 1:500]... )
+
+test_set = hcat( [draw() for i in 1:100]... )
+
+mean(train_set)
 
 ######
 
@@ -105,24 +141,6 @@ Ns = size(train_set,2)
 
 
 
-score(pars::Pars, dat) = mean(xloglik(dat[:,j], pars)[1] for j in 1:size(dat,2))
-score_train(pars::Pars) = score(pars, train_set)
-score_test(pars::Pars) =  score(pars, test_set)
-
-xloglik(train_set[:,3], pars)
-mean( xloglik(train_set[:,j], pars₀)[1] for j in 1:96 )
-
-mean( xloglik(test_set[:,j], pars)[1] for j in 1:225 )
-
-test_set[:,225]
-sc, xt, xloglik(test_set[:,225], pars)
-show()
-
-
-train_set[:,97]
-xloglik(train_set[:,97], pars₀)
-xloglik(train_set[:,97], pars)
-
 ############  model
 
 pars₀ = Pars(Nh, Nd, Ne)
@@ -130,15 +148,30 @@ pars₀ = Pars(Nh, Nd, Ne)
 score_train(pars₀)
 score_test(pars₀)
 
-pars = sgd(pars₀, xloglik, xdloglik!,maxsteps=100,
-           maxtime=60, chunksize=100,
-           kscale=1e-3, cbinterval=25, k0=1e-3)
+# pars = sgd(pars₀, xloglik, xdloglik!,maxsteps=100,
+#            maxtime=60, chunksize=100,
+#            kscale=1e-3, cbinterval=25, k0=1e-2)
 
-sum( pars.Vm[5] .== pars₀.Vm[5] )
+pars = sgd(pars₀, xloglik, xdloglik!,
+           maxtime=120, chunksize=100,
+           kscale=1e-3, cbinterval=25, k0=5e-3)
 
-pars = sgd(pars, xloglik, xdloglik!,
-           maxtime=60, chunksize=100,
-           kscale=1e-3, cbinterval=25, k0=1e-3)
+# a,b = exp(), sigmoide : 400 : α = 0.333, train : -85.5, test : -86.1
+
+#################### a,b = transfo, sigmoide
+pars₀ = Pars(Nh, Nd, Ne)
+scal!(pars₀, 10.)
+
+pars = sgd(pars₀,
+           maxtime=120, chunksize=100,
+           kscale=1e-3, cbinterval=25, k0=5e-3)
+
+pars = sgd(pars₀, xloglik, xdloglik!,
+          maxtime=50, chunksize=100,
+          kscale=1e-4, cbinterval=25, k0=5e-3)
+
+
+# a,b = transfo, sigmoide : 350 : α = 0.364, train : -82.0, test : -81.5
 
 pars = sgd(pars, xloglik, xdloglik!,
           maxtime=120, chunksize=100,
@@ -177,89 +210,13 @@ score_test(pars)
 
 ##############  drawing
 
-sum( xloglik(dat[:,j], pars)[1] for j in 1:size(dat,2) )
 spars = deepcopy(pars)
-
-## make a sample following the partial values given
-xs = ones(10)*0.5
-function xsample(xs::Vector{Float64}, pars::Pars)
-  nx = length(xs)
-  a  = copy(pars.c)
-  ll  = 0.
-  xt = Array(Float64, Nd)
-  h  = Array(Float64, Nh, Nd)
-  cpars = Array(Float64, Ne, 3)
-
-  # known part
-  for i in 1:nx # i = 1
-    h[:,i] .= sigm.(a)
-
-    for j in 1:Ne
-      cpars[j,1] = pars.bm[j][i] + dot(pars.Vm[j][:,i], h[:,i])
-      cpars[j,2] = pars.bn[j][i] + dot(pars.Vn[j][:,i], h[:,i])
-      cpars[j,3] = pars.bw[j][i] + dot(pars.Vw[j][:,i], h[:,i])
-    end
-
-    xt[i] = loglik(cpars, xs[i], (i==1) ? xs[1] : xs[i-1])
-    ll += xt[i]
-    a .+= pars.W[:,i] * xs[i]
-  end
-
-  xs2 = zeros(Nd)
-  xs2[1:nx] = xs
-  # sampled part
-  for i in nx+1:Nd # i = nx+1
-    h[:,i] .= sigm.(a)
-
-    for j in 1:Ne
-      cpars[j,1] = pars.bm[j][i] + dot(pars.Vm[j][:,i], h[:,i])
-      cpars[j,2] = pars.bn[j][i] + dot(pars.Vn[j][:,i], h[:,i])
-      cpars[j,3] = pars.bw[j][i] + dot(pars.Vw[j][:,i], h[:,i])
-    end
-
-    # pick component
-    wn = exp.(cpars[:,3])
-    wn ./= sum(wn)
-    ci = rand(Categorical(wn))
-
-    # pick x value
-    if ci == Ne   # normal component, centered on x[i-1]
-      # xs2[i] = clamp(rand(Normal(xs2[i-1], 0.01)), 0.001, 0.999)
-      # xs2[i] = clamp( xs2[i-1], 0.001, 0.999)
-      xs2[i] = ficdf3(cpars[ci,1], cpars[ci,2], rand())
-    else
-      xs2[i] = ficdf3(cpars[ci,1], cpars[ci,2], rand())
-    end
-
-    xt[i] = loglik(cpars, xs2[i], clamp(xs2[i-1],0.001,0.999))
-    ll += xt[i]
-    a  .+= pars.W[:,i] * xs2[i]
-  end
-
-
-  xs2, xt, ll
-end
+score_train(spars)
+using JLD
+save("/home/fred/spars1.jld", "spars", spars)
 
 xs2, lls, ll = xsample([0.], spars)
 
-#### proba ponctuelle
-nbcurves = 5
-xs = linspace(0., 1., Nd)
-px = xs * ones(nbcurves)'
-py = similar(px)
-cn=repeat([1:nbcurves;], inner=[Nd])
-
-for i in 1:Ne-1 # i = 1
-  py[:,i] = fk3.(xs, cpars[i,1], cpars[i,2])
-end
-py[:,end] = py[:,1:Ne-1] * wn[1:4]
-
-data_values(x=vec(px), y=vec(py), cn=cn) +
-      mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
-      encoding_color_nominal(:cn)
-
-
-fk3
 
 #### à partir de t₀ = 0
 nbexamples = 10
@@ -267,7 +224,7 @@ px = linspace(0., 1., Nd) * ones(nbexamples)'
 py = similar(px)
 
 for i in 1:nbexamples
-  py[:,i] = xsample([rand()], spars)[1]
+  py[:,i] = xsample([0., 0., 0.], spars)[1]
 end
 
 data_values(x=vec(px), y=vec(py), cn=repeat([1:nbexamples;], inner=[Nd])) +
@@ -282,15 +239,34 @@ cn=repeat(["real"; "simul"], inner=Nd)
 nbexamples = 500
 pm[:,1] = vec(mapslices(mean, train_set[:,1:nbexamples], 2)) # moyenne training set
 
+
 spars = deepcopy(pars)
 for j in 1:nbexamples
-  pm[:,2] .+= xsample([train_set[1,j]], spars)[1]
+  pm[:,2] .+= xsample([0.5, 0.45, 0.42, 0.38], spars)[1]
 end
 pm[:,2] ./= nbexamples
 
 data_values(x=vec(px), y=vec(pm), cn=cn) +
   mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
   encoding_color_nominal(:cn)
+
+########### moyenne 1 bis
+px = repeat(linspace(0., 1., Nd), outer=2)
+pm = zeros(Nd,2)
+cn=repeat(["real"; "simul"], inner=Nd)
+
+nbexamples = 500
+pm[:,1] = vec(mapslices(mean, train_set[:,1:nbexamples], 2)) # moyenne training set
+
+spars = deepcopy(pars)
+for j in 1:nbexamples
+    pm[:,2] .+= xsample(train_set[1:10,j], spars)[1]
+end
+pm[:,2] ./= nbexamples
+
+data_values(x=vec(px), y=vec(pm), cn=cn) +
+    mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
+    encoding_color_nominal(:cn)
 
 sum( spars.Vm[1] .== pars₀.Vm[1] )
 sum( spars.Vm[5] .== pars₀.Vm[5] )

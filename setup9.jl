@@ -23,19 +23,10 @@ power(a::Float64,b::Float64) = exp(log(a)*b)
 @deriv_rule power(x::Real, y::Real)  y     log(x) * power(x,y) * ds
 
 ek3 = quote
-    em = exp(m)
-    a = 1. + sqrt(em * exp(n))
-    b = a / em + 1.
-    # a = exp(m)
-    # b = exp(n)
+    a = exp(m)
+    b = exp(n)
     a*b*power(x,a-1.) * power(1. - power(x,a), b-1.)
 end
-
-# i = 1
-# fk3(p, pars[i,1], pars[i,2])
-# m = pars[i,1]
-# n = pars[i,2]
-# x = 0.945
 
 # TODO : optim du code généré
 
@@ -58,24 +49,17 @@ edk3a = rdiff(ek3, x = Float64, m=Float64, n=Float64, ignore=:x)
 # dloglik(pars, 0.9)[6,:]
 
 function fcdf3(m::Float64,n::Float64,x::Float64)
-  # a = exp(m)
-  # b = exp(n)
-  em = exp(m)
-  a = 1. + sqrt(em * exp(n))
-  b = a / em + 1.
+  a = exp(m)
+  b = exp(n)
   1. - (1 - x^a)^b
 end
-
 
 # fcdf3(-5.,10.,0.5)
 # fcdf3.(-2.,2.,[0:0.1:1;])
 
 function ficdf3(m::Float64,n::Float64,p::Float64)
-  # a = exp(m)
-  # b = exp(n)
-  em = exp(m)
-  a = 1. + sqrt(em * exp(n))
-  b = a / em + 1.
+  a = exp(m)
+  b = exp(n)
   (1. - (1. - p)^(1/b))^(1/a)
 end
 
@@ -86,13 +70,22 @@ end
 
 ####### loglik definitions  #######################################
 
-function loglik(pars::Matrix{Float64}, x::Float64, x₀::Float64)
-    ws = exp.(pars[:,3])
+function loglik(cpars::Matrix{Float64}, x::Float64, x₀::Float64)
+    ne = size(cpars,1)
+    ws = exp.(cpars[:,3])
     ws ./= sum(ws)
+
     pm = 0.
-    for i in 1:length(ws)
-      pm += ws[i] * fk3(x, pars[i,1], pars[i,2])
+    for i in 1:ne-3
+        pm += ws[i] * fk3(x, cpars[i,1], cpars[i,2])
     end
+
+    x00 = clamp(x₀-5e-4, 0.   , 0.999)
+    x01 = clamp(x₀+5e-4, 0.001, 1.   )
+    x00 < x < x01 && (pm += ws[ne-1]*1000.)
+    x>0.999 && (pm += ws[ne]*1000.)
+    x<0.001 && (pm += ws[ne-2]*1000.)
+
     -log(pm)
 end
 # loglik(pars, 0.5, 0.5)
@@ -122,9 +115,15 @@ function dloglik!(cpars::Matrix{Float64}, dcpars::Matrix{Float64},
     sws0 = sum(ws0)
     ws = ws0 ./ sws0
     ps = Array(Float64, ne)
-    for i in 1:ne
+    for i in 1:ne-3
       ps[i] = fk3(x, cpars[i,1], cpars[i,2])
     end
+    x00 = clamp(x₀-5e-4, 0.   , 0.999)
+    x01 = clamp(x₀+5e-4, 0.001, 1.   )
+    ps[ne-1] = (x00 < x < x01) * 1000.
+    ps[ne-1] = Float64(x==x₀)
+    ps[ne]   = (x > 0.999) * 1000.
+    ps[ne-2] = (x < 0.001) * 1000.
 
     pm = dot(ws, ps)
 
@@ -132,36 +131,83 @@ function dloglik!(cpars::Matrix{Float64}, dcpars::Matrix{Float64},
     dcpars[:,3] = ws0 ./ sws0 .* ( _tmp5 + ( sum(-ws0 .* _tmp5) / sws0 ) )
 
     dv0 = -1/pm
-    for i in 1:ne
+    for i in 1:ne-3
         dcpars[i,1], dcpars[i,2] = fdk3(x, cpars[i,1], cpars[i,2])
         dcpars[i,1] *= ws[i] * dv0
         dcpars[i,2] *= ws[i] * dv0
     end
+    dcpars[ne-1,1], dcpars[ne-1,2] = 0., 0.
+    dcpars[ne  ,1], dcpars[ne  ,2] = 0., 0.
+    dcpars[ne-2,1], dcpars[ne-2,2] = 0., 0.
 
     dcpars
 end
 
-# ipars = rand(Normal(),5,3)
-#
-# loglik(ipars, 0.5, 0.4)
-# dipars = zeros(ipars)
-# dloglik!(ipars, dipars, 0.5, 0.4)
-#
-# ipars2 = copy(ipars); ipars2[2,2] += δ
-# (loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
-# dipars[2,2]
-#
-# ipars2 = copy(ipars); ipars2[5,2] += δ
-# (loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
-# dipars[5,2]
-#
-# ipars2 = copy(ipars); ipars2[5,1] += δ
-# (loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
-# dipars[5,1]
-#
-# ipars2 = copy(ipars); ipars2[5,3] += δ
-# (loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
-# dipars[5,3]
+function dtest(cpars, x, x₀, indexes)
+  # field, indexes = :Vm, [2, [1,1]]
+  δ = 1e-8
+
+  p0 = getindex(cpars, indexes...)
+  cpars2 = deepcopy(cpars)
+  setindex!(cpars2, p0+δ, indexes...)
+
+  ed = (loglik(cpars2, x, x₀) - loglik(cpars, x, x₀)) / δ
+
+  dcpars = zeros(cpars)
+  dloglik!(cpars, dcpars, x, x₀)
+  ed0 = getindex(dcpars, indexes...)
+  ( ed0, ed )
+end
+
+cpars = rand(5,3)
+
+dtest(cpars, 0.5, 0.4, [1,1])
+dtest(cpars, 0.5, 0.4, [2,2])
+
+dtest(cpars, 0.5, 0.4, [5,1])
+dtest(cpars, 0.5, 0.4, [5,2])
+dtest(cpars, 0.5, 0.4, [3,1])
+dtest(cpars, 0.5, 0.4, [4,2])
+
+dtest(cpars, 0.5, 0.4, [1,3])
+dtest(cpars, 0.5, 0.4, [5,3])
+dtest(cpars, 0.5, 0.4, [5,3])
+
+dtest(cpars, 0.5, 0.5, [1,1])
+dtest(cpars, 0.5, 0.5, [2,2])
+
+dtest(cpars, 0.5, 0.5, [1,3])
+dtest(cpars, 0.5, 0.5, [3,3])
+dtest(cpars, 0.5, 0.5, [4,3])
+dtest(cpars, 0.5, 0.5, [5,3])
+
+dtest(cpars, 0.0001, 0.5, [1,1])
+dtest(cpars, 0.0001, 0.5, [2,2])
+
+dtest(cpars, 0.0001, 0.5, [1,3])
+dtest(cpars, 0.0001, 0.5, [3,3])
+dtest(cpars, 0.0001, 0.5, [4,3])
+dtest(cpars, 0.0001, 0.5, [5,3])
+
+loglik(ipars, 0.5, 0.4)
+dipars = zeros(ipars)
+dloglik!(ipars, dipars, 0.5, 0.4)
+
+ipars2 = copy(ipars); ipars2[2,2] += δ
+(loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
+dipars[2,2]
+
+ipars2 = copy(ipars); ipars2[5,2] += δ
+(loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
+dipars[5,2]
+
+ipars2 = copy(ipars); ipars2[5,1] += δ
+(loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
+dipars[5,1]
+
+ipars2 = copy(ipars); ipars2[5,3] += δ
+(loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
+dipars[5,3]
 
 
 
