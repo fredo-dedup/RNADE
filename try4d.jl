@@ -1,3 +1,7 @@
+################################################################
+##  égal à tr3d.jl avec composante centrée sur la valeur précédente
+################################################################
+
 using Distributions
 # using BenchmarkTools
 using VegaLite
@@ -79,6 +83,91 @@ function Pars(Nh, Nd, Ne)
     )
 end
 
+
+function loglik(pars::Matrix{Float64}, x::Float64, x₀::Float64)
+    ws = exp.(pars[:,3])
+    ws ./= sum(ws)
+    # pm = dot(ws[1:end-1], fk3.(x, pars[1:end-1,1], pars[1:end-1,2]))
+    pm = 0.
+    for i in 1:length(ws)-1
+      pm += ws[i] * fk3(x, pars[i,1], pars[i,2])
+    end
+    pm += ws[end] * pdf(Normal(x₀, 0.01), x)
+    -log(pm)
+end
+# loglik(pars, 0.5, 0.5)
+# exp(-loglik(pars, 0.1))
+#
+# @benchmark loglik(pars, 0.5) # 28us
+
+
+# delta = 1e-4
+# pars1 = copy(pars) ; pars1[1,1] += delta
+# (loglik(pars1,0.9)-loglik(pars,0.9))/delta
+#
+# pars1 = copy(pars) ; pars1[1,2] += delta
+# (loglik(pars1,0.9)-loglik(pars,0.9))/delta
+#
+# pars1 = copy(pars) ; pars1[1,3] += delta
+# (loglik(pars1,0.9)-loglik(pars,0.9))/delta
+#
+# dloglik(pars, 0.9)[6,:]
+
+
+function dloglik!(pars::Matrix{Float64}, dpars::Matrix{Float64},
+                  x::Float64, x₀::Float64)
+    # p = 0.5
+    ne = size(pars,1)
+    ws0 = exp.(pars[:,3])
+    sws0 = sum(ws0)
+    ws = ws0 ./ sws0
+    ps = Array(Float64, ne)
+    # ps[1:ne-1] = fk3.(x, pars[1:ne-1,1], pars[1:ne-1,2])
+    for i in 1:ne-1
+      ps[i] = fk3(x, pars[i,1], pars[i,2])
+    end
+    ps[ne] = pdf(Normal(x₀, 0.01), x)
+    # ps = vcat(fk3.(x, pars[1:end-1,1], pars[1:end-1,2]),
+    #           pdf(Normal(x₀, 0.01), x) )
+
+    pm = dot(ws, ps)
+
+    _tmp5 = - ps ./ pm
+    dpars[:,3] = ws0 ./ sws0 .* ( _tmp5 + ( sum(-ws0 .* _tmp5) / sws0 ) )
+
+    dv0 = -1/pm
+    for i in 1:ne-1
+        dpars[i,1], dpars[i,2] = fdk3(x, pars[i,1], pars[i,2])
+        dpars[i,1] *= ws[i] * dv0
+        dpars[i,2] *= ws[i] * dv0
+    end
+    dpars[ne,1], dpars[ne,2] = 0., 0.
+
+    dpars
+end
+
+# ipars = rand(Normal(),5,3)
+#
+# loglik(ipars, 0.5, 0.4)
+# dipars = zeros(ipars)
+# dloglik!(ipars, dipars, 0.5, 0.4)
+#
+# ipars2 = copy(ipars); ipars2[2,2] += δ
+# (loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
+# dipars[2,2]
+#
+# ipars2 = copy(ipars); ipars2[5,2] += δ
+# (loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
+# dipars[5,2]
+#
+# ipars2 = copy(ipars); ipars2[5,1] += δ
+# (loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
+# dipars[5,1]
+#
+# ipars2 = copy(ipars); ipars2[5,3] += δ
+# (loglik(ipars2, 0.5, 0.4)-loglik(ipars, 0.5, 0.4)) / δ
+# dipars[5,3]
+
 pars = Pars(Nh, Nd, Ne)
 dpars = deepcopy(pars)
 whos(r"pars") # ~400kb
@@ -97,13 +186,12 @@ function xloglik(xs::Vector{Float64}, pars::Pars)
     h[:,i] .= sigm.(a)
 
     for j in 1:Ne
-      m = pars.bm[j][i] + dot(pars.Vm[j][:,i], h[:,i])
-      n = pars.bn[j][i] + dot(pars.Vn[j][:,i], h[:,i])
-      w = pars.bw[j][i] + dot(pars.Vw[j][:,i], h[:,i])
-      cpars[j,:] = [m,n,w]
+      cpars[j,1] = pars.bm[j][i] + dot(pars.Vm[j][:,i], h[:,i])
+      cpars[j,2] = pars.bn[j][i] + dot(pars.Vn[j][:,i], h[:,i])
+      cpars[j,3] = pars.bw[j][i] + dot(pars.Vw[j][:,i], h[:,i])
     end
 
-    xt[i] = loglik(cpars, xs[i])
+    xt[i] = loglik(cpars, xs[i], (i==1) ? xs[1] : xs[i-1])
     ll += xt[i]
     a  .+= pars.W[:,i] * xs[i]
   end
@@ -126,26 +214,27 @@ function xdloglik!(xs::Vector{Float64}, pars::Pars, dpars::Pars) # x, pars = x�
   dcpars = similar(cpars)
   for i in nx:-1:1 # i = nx
     for j in 1:Ne
-      m = pars.bm[j][i] + dot(pars.Vm[j][:,i], h[:,i])
-      n = pars.bn[j][i] + dot(pars.Vn[j][:,i], h[:,i])
-      w = pars.bw[j][i] + dot(pars.Vw[j][:,i], h[:,i])
-      cpars[j,:] = [m,n,w]
+      cpars[j,1] = pars.bm[j][i] + dot(pars.Vm[j][:,i], h[:,i])
+      cpars[j,2] = pars.bn[j][i] + dot(pars.Vn[j][:,i], h[:,i])
+      cpars[j,3] = pars.bw[j][i] + dot(pars.Vw[j][:,i], h[:,i])
     end
 
-    dloglik!(cpars, dcpars, xs[i])
+    dloglik!(cpars, dcpars, xs[i], (i==1) ? xs[1] : xs[i-1])
 
     for j in 1:Ne
-      dpars.bm[j][i] = dcpars[j,1]
-      dpars.bn[j][i] = dcpars[j,2]
-      dpars.bw[j][i] = dcpars[j,3]
+      local m,n,w
+      dm,dn,dw = dcpars[j,1], dcpars[j,2], dcpars[j,3]
+      dpars.bm[j][i] = dm
+      dpars.bn[j][i] = dn
+      dpars.bw[j][i] = dw
 
-      dpars.Vm[j][:,i] = dcpars[j,1] .* h[:,i]
-      dpars.Vn[j][:,i] = dcpars[j,2] .* h[:,i]
-      dpars.Vw[j][:,i] = dcpars[j,3] .* h[:,i]
+      dpars.Vm[j][:,i] = dm .* h[:,i]
+      dpars.Vn[j][:,i] = dn .* h[:,i]
+      dpars.Vw[j][:,i] = dw .* h[:,i]
 
-      δh[:,i] += pars.Vm[j][:,i] .* dcpars[j,1] +
-                 pars.Vn[j][:,i] .* dcpars[j,2] +
-                 pars.Vw[j][:,i] .* dcpars[j,3]
+      δh[:,i] += pars.Vm[j][:,i] .* dm +
+                 pars.Vn[j][:,i] .* dn +
+                 pars.Vw[j][:,i] .* dw
     end
 
     dpars.W[:,i] = δa * xs[i]
@@ -161,6 +250,23 @@ dpars.c[1]
 dpars.c
 
 δ = 1e-8
+
+###############  profiling #################
+
+Profile.clear()
+Base.@profile collect(xdloglik!(dat[:,i], pars, dpars) for i in 50:500)
+Profile.print()
+
+@time collect(xdloglik!(dat[:,i], pars, dpars) for i in 50:500)
+# 3.83 s
+# 3.14 s
+# 3.00 s
+# 2.86 s
+# 1.81 s
+# 0.71 s
+
+
+###############  testing ########################
 
 ###########   c   ok
 pars2 = deepcopy(pars)
@@ -309,69 +415,3 @@ pars2.Vn[1][20,40] += δ
 
 (xloglik(xs,pars2)[1]-xloglik(xs,pars)[1]) / δ
 dpars.Vn[1][20,40]
-
-
-
-
-
-x₀    = draws[:,115]
-srand(0)
-pars₀ = Pars(nH, nD)
-pref, δb, δV, δc, δW = gradp(x₀, pars₀)
-logp₀ = log(pref)
-logprob(x, pars) = log(prob(x, pars)[1])
-logprob(x₀, pars₀) , logp₀
-
-δ = 1e-6
-pars = deepcopy(pars₀)
-[ δb [ (pars.b=copy(pars₀.b);pars.b[i]+=δ;(logprob(x₀, pars)-logp₀)/δ) for i in 1:nD  ]]
-pars = deepcopy(pars₀)
-[ δc [ (pars.c=copy(pars₀.c);pars.c[i]+=δ;(logprob(x₀, pars)-logp₀)/δ) for i in 1:nH  ]]
-pars = deepcopy(pars₀)
-[ vec(δV) [ (pars.V=copy(pars₀.V);pars.V[i]+=δ;(logprob(x₀, pars)-logp₀)/δ) for i in 1:nH*nD  ]]
-pars = deepcopy(pars₀)
-[ vec(δW) [ (pars.W=copy(pars₀.W);pars.W[i]+=δ;(logprob(x₀, pars)-logp₀)/δ) for i in 1:nH*nD  ]]
-
-
-function fullgrad(pars::Pars)
-  δb = zeros(b)
-  δc = zeros(c)
-  δV = zeros(V)
-  δW = zeros(W)
-  logp = 0
-  for i in 1:nsamp
-    δp, δδb, δδV, δδc, δδW = gradp(draws[:,i], pars)
-    logp += log(δp)
-    δb += δδb
-    δc += δδc
-    δV += δδV
-    δW += δδW
-  end
-  (logp, δb, δV, δc, δW)
-end
-
-logp, δb, δV, δc, δW = fullgrad(pars₀)
-
-λ = 1e-3
-srand(1)
-pars = Pars(nH, nD)
-for i in 1:50
-  logp, δb, δV, δc, δW = fullgrad(pars)
-  pars.b += λ*δb
-  pars.c += λ*δc
-  pars.V += λ*δV
-  pars.W += λ*δW
-  println(logp)
-end
-
-
-[ prob(draws[:,i], pars)[1] for i in 1:10 ]
-
-log(1/nS)*nS
-
-
-prob([0.;], pars)[1]
-prob([0., 0], pars)[1] # 85%
-prob([0., 1], pars)[1] #  8%
-prob([1., 1], pars)[1] #  0.7%
-prob([1., 0], pars)[1] #  7%
