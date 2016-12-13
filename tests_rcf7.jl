@@ -12,17 +12,11 @@ Nd = 50  # variable size to estimate
 Nh = 10  # number of hidden units
 Ne = 5   # number of mixture elements
 
-include("setup9.jl")
+include("setup11.jl")
 
 score(pars::Pars, dat, f=xloglik) = mean(f(dat[:,j], pars)[1] for j in 1:size(dat,2))
 # score_train(pars::Pars) = score(pars, train_set)
 # score_test(pars::Pars) =  score(pars, test_set)
-
-mean(xloglik(dat[:,j], pars)[1] for j in 1:1)
-pars
-
-score_train(pars)
-score_train(pars₀)
 
 function sgd(pars₀;
              f::Function = xloglik,
@@ -70,7 +64,6 @@ function sgd(pars₀;
     pars
 end
 
-sgd(pars)
 
 ###########  read data
 
@@ -141,7 +134,7 @@ Ns = size(train_set,2)
 ############  model
 
 pars₀ = Pars(Nh, Nd, Ne)
-scal!(pars₀, 0.00001)
+scal!(pars₀, 0.1)
 score(pars₀, train_set, xloglik)
 score(pars₀, test_set, xloglik)
 parss = Pars[]
@@ -151,21 +144,23 @@ parss = Pars[]
 #            kscale=1e-3, cbinterval=25, k0=1e-2)
 
 pars = sgd(pars₀,
-           maxtime=600, chunksize=100, maxsteps=100000,
-           kscale=1e-1, cbinterval=25, k0=5e-3)
+           maxtime=300, chunksize=100, maxsteps=100000,
+           kscale=1e-1, cbinterval=25, k0=2e-3)
+
 
 score(pars, train_set, xloglik)
 score(pars, test_set, xloglik)
 
 push!(parss, deepcopy(pars))
 
+
 # a,b = exp(), sigmoide : 400 : α = 0.333, train : -85.5, test : -86.1
 # a,b = exp(), sigmoide + points 0,x,1 : 500 : α = 0.286, train : -273.6, test : -266.1
 
-plot_avg(train_set[:,1:500], parss[[3,6]])
-plot_ex(parss[6], 5)
+plot_avg(train_set[:,1:500], parss[end:end])
+plot_ex(parss[end], 5)
 
-plot_avg2(train_set[:,1:500], parss[[3,6]], [0.5,0.5,0.5,0.5])
+plot_avg2(train_set[:,1:500], parss[end:end], [0.5,0.5,0.5,0.5])
 
 
 pars = sgd(pars,
