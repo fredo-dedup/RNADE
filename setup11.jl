@@ -1,8 +1,9 @@
 ################################################################
 #
-#  setup 9
+#  setup 11
 #  kuma a,b = exp(), + ponctuel 0 , x et 1.
 #  activation sigmoide
+#  avec pénalisation
 #
 ################################################################
 
@@ -309,6 +310,7 @@ xs = rand(20)
 ############  RNADE defs #######################################
 
 sigm(x::Float64) = 1 ./ (1+exp(-x))
+const llp_fac = 1e-3
 
 # xs = test_set[:,225]
 
@@ -333,6 +335,21 @@ function xloglik(xs::Vector{Float64}, pars::Pars)
     ll += xt[i]
     a  .+= pars.W[:,i] * xs[i]
   end
+
+  # penalisation
+  llp = 0.
+  for i in 1:Ne
+    llp += dot(pars.Vm[i], pars.Vm[i])
+    llp += dot(pars.Vn[i],pars.Vn[i])
+    llp += dot(pars.Vw[i],pars.Vw[i])
+    llp += dot(pars.bm[i],pars.bm[i])
+    llp += dot(pars.bn[i],pars.bn[i])
+    llp += dot(pars.bw[i],pars.bw[i])
+  end
+  llp += dot(pars.W,pars.W)
+  llp += dot(pars.c,pars.c)
+
+  ll += llp_fac * llp
 
   ll, xt, h
 end
@@ -380,6 +397,19 @@ function xdloglik!(xs::Vector{Float64}, pars::Pars, dpars::Pars) # x, pars = x�
     # δa += δh[:,i] .* (h[:,i] .> 0.)
   end
   copy!(dpars.c, δa)
+
+  # penalisation
+  for i in 1:Ne
+    dpars.Vm[i] += 2 * llp_fac .* pars.Vm[i]
+    dpars.Vn[i] += 2 * llp_fac .* pars.Vn[i]
+    dpars.Vw[i] += 2 * llp_fac .* pars.Vw[i]
+    dpars.bm[i] += 2 * llp_fac .* pars.bm[i]
+    dpars.bn[i] += 2 * llp_fac .* pars.bn[i]
+    dpars.bw[i] += 2 * llp_fac .* pars.bw[i]
+  end
+  dpars.W += 2 * llp_fac .* pars.W
+  dpars.c += 2 * llp_fac .* pars.c
+
   dpars
 end
 

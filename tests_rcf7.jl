@@ -8,27 +8,20 @@ using VegaLite
 using JLD
 
 
-const Nd = 50  # variable size to estimate
-const Nh = 10  # number of hidden units
-const Ne = 5   # number of mixture elements
+Nd = 50  # variable size to estimate
+Nh = 10  # number of hidden units
+Ne = 5   # number of mixture elements
 
-
-include("setup12.jl")
+include("setup11.jl")
 
 score(pars::Pars, dat, f=xloglik) = mean(f(dat[:,j], pars)[1] for j in 1:size(dat,2))
 # score_train(pars::Pars) = score(pars, train_set)
 # score_test(pars::Pars) =  score(pars, test_set)
 
-mean(xloglik(dat[:,j], pars)[1] for j in 1:1)
-pars
-
-score_train(pars)
-score_train(pars₀)
-
 function sgd(pars₀;
              f::Function = xloglik,
              df!::Function = xdloglik!,
-             dat = train_set,
+             dat  = train_set,
              datt = test_set,
              maxtime=10, maxsteps=1000, chunksize=100,
              kscale=1e-4, cbinterval=100, k0=1e-3)
@@ -64,7 +57,6 @@ function sgd(pars₀;
         if cbinterval > 0 && t % cbinterval == 0
             ll  = score(pars,  dat, f)
             llt = score(pars, datt, f)
-
             println("$t : α = $(round(α,3)), train : $(round(ll,1)), test : $(round(llt,1))")
         end
     end
@@ -72,7 +64,6 @@ function sgd(pars₀;
     pars
 end
 
-sgd(pars)
 
 ###########  read data
 
@@ -143,23 +134,18 @@ Ns = size(train_set,2)
 ############  model
 
 pars₀ = Pars(Nh, Nd, Ne)
-scal!(pars₀, 0.0001)
-score(pars₀, train_set)
-score(pars₀, test_set)
+scal!(pars₀, 0.1)
+score(pars₀, train_set, xloglik)
+score(pars₀, test_set, xloglik)
+parss = Pars[]
+
+# pars = sgd(pars₀, xloglik, xdloglik!,maxsteps=100,
+#            maxtime=60, chunksize=100,
+#            kscale=1e-3, cbinterval=25, k0=1e-2)
 
 pars = sgd(pars₀,
-           maxtime=40, chunksize=100,
-           kscale=1e-2, cbinterval=25, k0=5e-3)
-
-# a,b = exp(), sigmoide : 400 : α = 0.333, train : -85.5, test : -86.1
-
-#################### a,b = transfo, sigmoide
-pars₀ = Pars(Nh, Nd, Ne)
-scal!(pars₀, 10.)
-
-pars = sgd(pars,
-           maxtime=40, chunksize=30,
-           kscale=1e-2, cbinterval=50, k0=5e-3)
+           maxtime=300, chunksize=100, maxsteps=100000,
+           kscale=1e-1, cbinterval=25, k0=2e-3)
 
 
 score(pars, train_set, xloglik)
@@ -167,13 +153,14 @@ score(pars, test_set, xloglik)
 
 push!(parss, deepcopy(pars))
 
+
 # a,b = exp(), sigmoide : 400 : α = 0.333, train : -85.5, test : -86.1
 # a,b = exp(), sigmoide + points 0,x,1 : 500 : α = 0.286, train : -273.6, test : -266.1
 
-plot_avg(train_set[:,1:500], parss[[3,6]])
-plot_ex(parss[6], 5)
+plot_avg(train_set[:,1:500], parss[end:end])
+plot_ex(parss[end], 5)
 
-plot_avg2(train_set[:,1:500], parss[[3,6]], [0.5,0.5,0.5,0.5])
+plot_avg2(train_set[:,1:500], parss[end:end], [0.5,0.5,0.5,0.5])
 
 
 pars = sgd(pars,
@@ -186,7 +173,6 @@ pars = sgd(pars,
            maxtime=300, chunksize=100,
            kscale=1e-5, cbinterval=25, k0=5e-3)
 
-
 push!(parss, deepcopy(pars))
 
 pars = sgd(pars,
@@ -196,11 +182,10 @@ pars = sgd(pars,
 push!(parss, deepcopy(pars))
 
 
-
 ##############  drawing
 
 spars = deepcopy(pars)
-score(spars, train_set)
+score_train(spars)
 using JLD
 save("/home/fred/spars1.jld", "spars", spars)
 
@@ -212,7 +197,6 @@ function plot_ex(pars, nbexamples)
   nbexamples = 5
   px = linspace(0., 1., Nd) * ones(nbexamples)'
   py = similar(px)
-
 
   for i in 1:nbexamples
     py[:,i] = xsample([0., 0., 0.], pars)[1]
@@ -280,6 +264,11 @@ pm[:,2] ./= nbexamples
 data_values(x=vec(px), y=vec(pm), cn=cn) +
     mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
     encoding_color_nominal(:cn)
+
+sum( spars.Vm[1] .== pars₀.Vm[1] )
+sum( spars.Vm[5] .== pars₀.Vm[5] )
+
+
 
 ########### moyenne 2
 

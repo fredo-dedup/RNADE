@@ -2,7 +2,7 @@
 #
 #  setup 9
 #  kuma a,b = exp(), + ponctuel 0 , x et 1.
-#  activation sigmoide
+#  activation RELU
 #
 ################################################################
 
@@ -320,8 +320,8 @@ function xloglik(xs::Vector{Float64}, pars::Pars)
   h  = Array(Float64, Nh, nx)
   cpars = Array(Float64, Ne, 3)
   for i in 1:nx # i = 33
-    h[:,i] .= sigm.(a)
-    # h[:,i] .= max.(0., a)
+    # h[:,i] .= sigm.(a)
+    h[:,i] .= max.(0., a)
 
     for j in 1:Ne
       cpars[j,1] = pars.bm[j][i] + dot(pars.Vm[j][:,i], h[:,i])
@@ -376,8 +376,8 @@ function xdloglik!(xs::Vector{Float64}, pars::Pars, dpars::Pars) # x, pars = x�
     end
 
     dpars.W[:,i] = δa * xs[i]
-    δa     += δh[:,i] .* h[:,i] .* (1. - h[:,i])
-    # δa += δh[:,i] .* (h[:,i] .> 0.)
+    # δa     += δh[:,i] .* h[:,i] .* (1. - h[:,i])
+    δa += δh[:,i] .* (h[:,i] .> 0.)
   end
   copy!(dpars.c, δa)
   dpars
@@ -536,7 +536,8 @@ function xsample(xs::Vector{Float64}, pars::Pars)
 
   # known part
   for i in 1:nx # i = 1
-    h[:,i] .= sigm.(a)
+    # h[:,i] .= sigm.(a)
+    h[:,i] .= max.(0., a)
 
     for j in 1:Ne
       cpars[j,1] = pars.bm[j][i] + dot(pars.Vm[j][:,i], h[:,i])
@@ -554,7 +555,8 @@ function xsample(xs::Vector{Float64}, pars::Pars)
   xs2[1:nx] = xs
   # sampled part
   for i in nx+1:Nd # i = nx+1
-    h[:,i] .= sigm.(a)
+    # h[:,i] .= sigm.(a)
+    h[:,i] .= max.(0., a)
 
     for j in 1:Ne
       cpars[j,1] = pars.bm[j][i] + dot(pars.Vm[j][:,i], h[:,i])
