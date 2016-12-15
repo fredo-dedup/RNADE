@@ -8,25 +8,20 @@ using VegaLite
 using JLD
 
 
-Nd = 50  # variable size to estimate
-Nh = 10  # number of hidden units
-Ne = 5   # number of mixture elements
+const Nd = 50  # variable size to estimate
+const Nh = 10  # number of hidden units
+const Ne = 5   # number of mixture elements
 
-include("setup8.jl")
+include("setup12.jl")
 
 
 score(pars::Pars, dat, f=xloglik) = mean(xloglik(dat[:,j], pars)[1] for j in 1:size(dat,2))
-score_train(pars::Pars) = score(pars, train_set)
-score_test(pars::Pars) =  score(pars, test_set)
-
-score_train
 
 function sgd(pars₀;
              f::Function = xloglik,
              df!::Function = xdloglik!,
              dat = train_set,
-            #  score_test::Function =  score_test,
-            #  score_train::Function = score_train,
+             datt = test_set,
              maxtime=10, maxsteps=1000, chunksize=100,
              kscale=1e-4, cbinterval=100, k0=1e-3)
 
@@ -60,10 +55,12 @@ function sgd(pars₀;
         add!(pars, scal!(dpars, -α*kscale))
         α = 1. / (1 + t*k0)
 
+        any(isnan(pars.c)) && break
+
         # callback
         if cbinterval > 0 && t % cbinterval == 0
-            ll = score_train(pars)
-            llt = score_test(pars)
+            ll = score(pars, dat)
+            llt = score(pars, datt)
             println("$t : α = $(round(α,3)), train : $(round(ll,1)), test : $(round(llt,1))")
         end
     end
@@ -144,17 +141,13 @@ Ns = size(train_set,2)
 ############  model
 
 pars₀ = Pars(Nh, Nd, Ne)
-# scal!(pars₀, 0.1)
-score_train(pars₀)
-score_test(pars₀)
+scal!(pars₀, 0.0001)
+score(pars₀, train_set)
+score(pars₀, test_set)
 
-# pars = sgd(pars₀, xloglik, xdloglik!,maxsteps=100,
-#            maxtime=60, chunksize=100,
-#            kscale=1e-3, cbinterval=25, k0=1e-2)
-
-pars = sgd(pars₀, xloglik, xdloglik!,
-           maxtime=120, chunksize=100,
-           kscale=1e-3, cbinterval=25, k0=5e-3)
+pars = sgd(pars₀,
+           maxtime=40, chunksize=100,
+           kscale=1e-2, cbinterval=25, k0=5e-3)
 
 # a,b = exp(), sigmoide : 400 : α = 0.333, train : -85.5, test : -86.1
 
@@ -162,9 +155,9 @@ pars = sgd(pars₀, xloglik, xdloglik!,
 pars₀ = Pars(Nh, Nd, Ne)
 scal!(pars₀, 10.)
 
-pars = sgd(pars₀,
-           maxtime=120, chunksize=100,
-           kscale=1e-3, cbinterval=25, k0=5e-3)
+pars = sgd(pars,
+           maxtime=40, chunksize=30,
+           kscale=1e-2, cbinterval=50, k0=5e-3)
 
 pars = sgd(pars₀, xloglik, xdloglik!,
           maxtime=50, chunksize=100,
@@ -202,16 +195,11 @@ sum( pars.Vm[5] .== pars₀.Vm[5] )
 
 # sigmoide + a+1, b+1 modele  :1000 : α = 0.5, train : -177.3, test : -176.2
 
-score_train(pars)
-score_test(pars)
-
-
-
 
 ##############  drawing
 
 spars = deepcopy(pars)
-score_train(spars)
+score(spars, train_set)
 using JLD
 save("/home/fred/spars1.jld", "spars", spars)
 
@@ -224,7 +212,7 @@ px = linspace(0., 1., Nd) * ones(nbexamples)'
 py = similar(px)
 
 for i in 1:nbexamples
-  py[:,i] = xsample([0., 0., 0.], spars)[1]
+  py[:,i] = xsample([rand();], spars)[1]
 end
 
 data_values(x=vec(px), y=vec(py), cn=repeat([1:nbexamples;], inner=[Nd])) +
@@ -267,11 +255,6 @@ pm[:,2] ./= nbexamples
 data_values(x=vec(px), y=vec(pm), cn=cn) +
     mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
     encoding_color_nominal(:cn)
-
-sum( spars.Vm[1] .== pars₀.Vm[1] )
-sum( spars.Vm[5] .== pars₀.Vm[5] )
-
-
 
 ########### moyenne 2
 
