@@ -72,7 +72,9 @@ ficdf3(-1.,-1.,0.5)
 
 ####### loglik definitions  #######################################
 
+const pwidth = 1e-2
 function loglik(cpars::Matrix{Float64}, x::Float64, x₀::Float64)
+    # x, x₀ = 0.5, 0.3
     ne = size(cpars,1)
     ws = exp.(cpars[:,3])
     ws ./= sum(ws)
@@ -82,11 +84,12 @@ function loglik(cpars::Matrix{Float64}, x::Float64, x₀::Float64)
         pm += ws[i] * fk3(x, cpars[i,1], cpars[i,2])
     end
 
-    x00 = clamp(x₀-5e-4, 0.   , 0.999)
-    x01 = clamp(x₀+5e-4, 0.001, 1.   )
-    x00 < x < x01 && (pm += ws[ne-1]*1000.)
-    x>0.999 && (pm += ws[ne]*1000.)
-    x<0.001 && (pm += ws[ne-2]*1000.)
+    pw0, pw1, hpw, ipw = pwidth, 1. - pwidth, pwidth / 2., 1. / pwidth
+    x00 = clamp(x₀ - hpw, 0. , pw1)
+    x01 = clamp(x₀ + hpw, pw0, 1. )
+    x00 < x < x01 && (pm += ws[ne-1]*ipw)
+    x>pw1 && (pm += ws[ne]*ipw)
+    x<pw0 && (pm += ws[ne-2]*ipw)
 
     -log(pm)
 end
@@ -94,6 +97,18 @@ end
 # exp(-loglik(pars, 0.1))
 #
 # @benchmark loglik(pars, 0.5) # 28us
+#
+# cpars = rand(Normal(), Ne,3)
+# loglik(cpars,0.5,0.2)
+#
+# i = 5
+# quadgk( x -> fk3(x, cpars[i,1], cpars[i,2]), 0., 1.)
+#
+px = linspace(0.0001, 0.9999, 10000.)
+py = map( x -> exp(-loglik(cpars, x, 1.0)), px)
+mean(py)
+
+data_values(x=px, y=py) + mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y)
 
 
 # delta = 1e-4
@@ -121,11 +136,13 @@ function dloglik!(cpars::Matrix{Float64}, dcpars::Matrix{Float64},
     for i in 1:ne-3
       ps[i] = fk3(x, cpars[i,1], cpars[i,2])
     end
-    x00 = clamp(x₀-5e-4, 0.   , 0.999)
-    x01 = clamp(x₀+5e-4, 0.001, 1.   )
-    ps[ne-1] = (x00 < x < x01) * 1000.
-    ps[ne]   = (x > 0.999) * 1000.
-    ps[ne-2] = (x < 0.001) * 1000.
+
+    pw0, pw1, hpw, ipw = pwidth, 1. - pwidth, pwidth / 2., 1. / pwidth
+    x00 = clamp(x₀ - hpw, 0. , pw1)
+    x01 = clamp(x₀ + hpw, pw0, 1. )
+    ps[ne-1] = (x00 < x < x01) * ipw
+    ps[ne]   = (x > pw1) * ipw
+    ps[ne-2] = (x < pw0) * ipw
 
     pm = dot(ws, ps)
 
@@ -310,7 +327,7 @@ xs = rand(20)
 ############  RNADE defs #######################################
 
 sigm(x::Float64) = 1 ./ (1+exp(-x))
-const llp_fac = 1e-3
+const llp_fac = 1e-1
 
 # xs = test_set[:,225]
 
@@ -459,6 +476,55 @@ function dtest(v0, pars, dpars, field, indexes...)
   ed0 = foldl((x,idx) -> getindex(x, idx...), getfield(dpars, field), indexes)
   ( ed0, ed )
 end
+
+#### version de test sur un bloc d'exemples
+function dtest(v0, pars, dpars, field, indexes...)
+  # field, indexes = :Vm, [2, [1,1]]
+  δ = 1e-8
+  p0 = foldl((x,idx) -> getindex(x, idx...), getfield(pars, field), indexes)
+
+  pars2 = deepcopy(pars)
+  np = foldl((x,idx) -> getindex(x, idx...), getfield(pars2, field), indexes[1:end-1])
+  setindex!(np, p0+δ, indexes[end]...)
+
+  ## eval
+  nv0 = 0.
+  for yi in trg
+      nv0 += xloglik(train_set[:,yi],pars2)[1]
+  end
+
+  ed = (nv0-v0) / δ
+
+  ed0 = foldl((x,idx) -> getindex(x, idx...), getfield(dpars, field), indexes)
+  ( ed0, ed )
+end
+
+trg = 1:500
+dparsi = deepcopy(pars)
+dpars  = deepcopy(pars)
+zeros!(dpars)
+for yi in trg
+    add!(dpars, xdloglik!(train_set[:,yi], pars, dparsi) )
+end
+
+v0 = 0.
+for yi in trg
+    v0 += xloglik(train_set[:,yi],pars)[1]
+end
+
+####################
+
+res = Array(Float64, Nd,2)
+for i in 1:Nd
+  res[i,1], res[i,2] = dtest(v0, pars, dpars, :Vm, 2, [1,i])
+end
+
+
+dtest(v0, pars, dpars, :Vm, 2, [10,1])
+dtest(v0, pars, dpars, :Vm, 2, [1,10])
+dtest(v0, pars, dpars, :Vm, 2, [10,30])
+dtest(v0, pars, dpars, :Vm, 2, [10,15])
+
 
 
 dtest(v0, pars, dpars, :Vm, 2, [1,1])
@@ -615,3 +681,20 @@ function xsample(xs::Vector{Float64}, pars::Pars)
 
   xs2, xt, ll
 end
+
+
+
+# wn = exp.(cpars[:,3])
+# wn ./= sum(wn)
+# ci = rand(Categorical(wn))
+#
+# # pick x value
+# if ci == Ne   # on 1.
+#     0.9999
+# elseif ci == Ne-1 # centered on x(t-1)
+#     xs2[i-1]
+# elseif ci == Ne-2  # on 0.
+#     0.0001
+# else
+#     ficdf3(cpars[ci,1], cpars[ci,2], rand())
+# end

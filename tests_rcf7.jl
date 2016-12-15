@@ -145,7 +145,7 @@ parss = Pars[]
 
 pars = sgd(pars₀,
            maxtime=300, chunksize=100, maxsteps=100000,
-           kscale=1e-1, cbinterval=25, k0=2e-3)
+           kscale=1e-3, cbinterval=25, k0=2e-3)
 
 
 score(pars, train_set, xloglik)
@@ -156,6 +156,8 @@ push!(parss, deepcopy(pars))
 
 # a,b = exp(), sigmoide : 400 : α = 0.333, train : -85.5, test : -86.1
 # a,b = exp(), sigmoide + points 0,x,1 : 500 : α = 0.286, train : -273.6, test : -266.1
+
+plot_avg(train_set[:,1:500], parss)
 
 plot_avg(train_set[:,1:500], parss[end:end])
 plot_ex(parss[end], 5)
