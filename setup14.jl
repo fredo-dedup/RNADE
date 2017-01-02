@@ -1,7 +1,7 @@
 ################################################################
 #
-#  setup 11
-#  kuma a,b = exp(), + ponctuel 0 , x et 1.
+#  setup 14
+#  kuma a,b = 1 + log(1+exp(-x)), + ponctuel 0 , x et 1.
 #  activation sigmoide
 #  avec pénalisation
 #
@@ -20,14 +20,14 @@ using ReverseDiffSource
 
 # type inference does not work ^ => creation of a power function
 
-power(a::Float64,b::Float64) = exp(log(a)*b)
-@deriv_rule power(x::Real, y::Real)  x     y * power(x,y-1.) * ds
-@deriv_rule power(x::Real, y::Real)  y     log(x) * power(x,y) * ds
+# power(a::Float64,b::Float64) = exp(log(a)*b)
+# @deriv_rule power(x::Real, y::Real)  x     y * power(x,y-1.) * ds
+# @deriv_rule power(x::Real, y::Real)  y     log(x) * power(x,y) * ds
 
 ek3 = quote
-    a = exp(m)
-    b = exp(n)
-    a*b*power(x,a-1.) * power(1. - power(x,a), b-1.)
+    a = 1. + log(1+exp(m))
+    b = 1. + log(1+exp(n))
+    a*b*exp(log(x)*(a-1.)) * exp(log(1. - exp(log(x)*a))*(b-1.))
 end
 
 # TODO : optim du code généré
@@ -51,8 +51,8 @@ edk3a = rdiff(ek3, x = Float64, m=Float64, n=Float64, ignore=:x)
 # dloglik(pars, 0.9)[6,:]
 
 function fcdf3(m::Float64,n::Float64,x::Float64)
-  a = exp(m)
-  b = exp(n)
+  a = 1. + log(1+exp(m))
+  b = 1. + log(1+exp(n))
   1. - (1 - x^a)^b
 end
 
@@ -60,8 +60,8 @@ end
 # fcdf3.(-2.,2.,[0:0.1:1;])
 
 function ficdf3(m::Float64,n::Float64,p::Float64)
-  a = exp(m)
-  b = exp(n)
+  a = 1. + log(1+exp(m))
+  b = 1. + log(1+exp(n))
   (1. - (1. - p)^(1/b))^(1/a)
 end
 
@@ -104,11 +104,11 @@ end
 # i = 5
 # quadgk( x -> fk3(x, cpars[i,1], cpars[i,2]), 0., 1.)
 #
-px = linspace(0.0001, 0.9999, 10000.)
-py = map( x -> exp(-loglik(cpars, x, 1.0)), px)
-mean(py)
-
-data_values(x=px, y=py) + mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y)
+# px = linspace(0.0001, 0.9999, 10000.)
+# py = map( x -> exp(-loglik(cpars, x, 1.0)), px)
+# mean(py)
+#
+# data_values(x=px, y=py) + mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y)
 
 
 # delta = 1e-4
@@ -302,6 +302,22 @@ function clamp!(a::Pars, low::Float64, up::Float64)
   a
 end
 
+import Base.maximum
+function maximum(a::Pars)
+  mx = -Inf
+  for i in 1:Ne
+    mx = max(mx, maxabs(a.Vm[i]))
+    mx = max(mx, maxabs(a.Vn[i]))
+    mx = max(mx, maxabs(a.Vw[i]))
+    mx = max(mx, maxabs(a.bm[i]))
+    mx = max(mx, maxabs(a.bn[i]))
+    mx = max(mx, maxabs(a.bw[i]))
+  end
+  mx = max(mx, maxabs(a.W))
+  mx = max(mx, maxabs(a.c))
+  mx
+end
+
 function zeros!(a::Pars)
   for i in 1:Ne
     fill!(a.Vm[i], 0.)
@@ -327,7 +343,7 @@ xs = rand(20)
 ############  RNADE defs #######################################
 
 sigm(x::Float64) = 1 ./ (1+exp(-x))
-const llp_fac = 1e-1
+const llp_fac = 0.
 
 # xs = test_set[:,225]
 
@@ -441,13 +457,14 @@ dpars.c
 # Base.@profile collect(xdloglik!(dat[:,i], pars, dpars) for i in 50:500)
 # Profile.print()
 #
-@time collect(xdloglik!(dat[:,i], pars, dpars) for i in 50:500)
+@time collect(xdloglik!(train_set[:,i], pars, dpars) for i in 50:500)
 # 3.83 s
 # 3.14 s
 # 3.00 s
 # 2.86 s
 # 1.81 s
 # 0.71 s
+# 0.57 s
 
 ###############  testing ########################
 
@@ -625,6 +642,8 @@ end
 ##########################################################################
 ## make a sample following the partial values given
 ##########################################################################
+
+xs = [0., 0., 0.;]
 
 function xsample(xs::Vector{Float64}, pars::Pars)
   nx = length(xs)

@@ -4,15 +4,25 @@
 #
 #############################################################################
 
+module Trying
+end
+
+
+
+module Trying
+
 using VegaLite
-using JLD
+# using JLD
 
 
-Nd = 50  # variable size to estimate
-Nh = 10  # number of hidden units
-Ne = 5   # number of mixture elements
+const Nd = 50  # variable size to estimate
+const Nh = 10  # number of hidden units
+const Ne = 7   # number of mixture elements
 
-include("setup11.jl")
+include("setup15.jl")
+
+import .RNADE: Pars, xloglik, xdloglik!, xsample, init
+import .RNADE: zeros!, scal!, clamp!, add!, maximum
 
 score(pars::Pars, dat, f=xloglik) = mean(f(dat[:,j], pars)[1] for j in 1:size(dat,2))
 # score_train(pars::Pars) = score(pars, train_set)
@@ -45,7 +55,10 @@ function sgd(pars₀;
             yi, datstate = next(datiter, datstate)
             add!(dpars, df!(dat[:,yi], pars, dparsi) )
         end
-        clamp!(scal!(dpars, -α*kscale), -1., 1.)
+        dmax = maximum(dpars)
+        (100./dmax < α*kscale/chunksize) && print("+")
+        scal!(dpars, - min(100./dmax, α*kscale/chunksize))
+        # clamp!(scal!(dpars, -α*kscale/chunksize), -1., 1.)
         add!(pars, dpars)
         α = 1. / (1 + t*k0)
 
@@ -65,6 +78,44 @@ function sgd(pars₀;
 end
 
 
+#### à partir de t₀ = 0
+function plot_ex{Nh,Nd,Ne}(pars::Pars{Nh,Nd,Ne}, nbexamples)
+  nbexamples = 5
+  px = linspace(0., 1., Nd) * ones(nbexamples)'
+  py = similar(px)
+
+  for i in 1:nbexamples
+    py[:,i] = xsample([0., 0., 0.], pars)[1]
+  end
+
+  data_values(x=vec(px), y=vec(py), cn=repeat([1:nbexamples;], inner=[Nd])) +
+        mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
+        encoding_color_nominal(:cn)
+end
+
+########### moyenne 1
+function plot_avg(train_set, parss, nbstart=10)
+  px = repeat(linspace(0., 1., Nd), outer=1+length(parss))
+  pm = zeros(Nd, length(parss) + 1)
+  cn=repeat(["real"; ["simul$i" for i in 1:length(parss)]], inner=Nd)
+
+  nbexamples = size(train_set,2)
+  pm[:,1] = vec(mapslices(mean, train_set[:,1:nbexamples], 2)) # moyenne training set
+
+  for (i,p) in enumerate(parss)
+    for j in 1:nbexamples
+      pm[:,i+1] .+= xsample(train_set[1:nbstart,j], p)[1]
+    end
+    pm[:,i+1] ./= nbexamples
+  end
+
+  data_values(x=vec(px), y=vec(pm), cn=cn) +
+    mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
+    encoding_color_nominal(:cn)
+end
+
+
+
 ###########  read data
 
 (dat0, hdr) = readcsv("c:/temp/rcf_matrix.csv", header=true)
@@ -78,14 +129,6 @@ extrema(dat1)
 dat1 = clamp(dat1, 0.0001, 0.9999)
 extrema(dat1)
 
-mean( diff(dat1,1) .== 0. ) # pas de mouv dans 80% des cas
-
-sum( diff(dat1,1), 2 )
-
-# data_values(x=[1.:49;], y=dtir) +
-#      mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y)
-
-
 # split train / test
 
 ids = shuffle(1:Ns0)
@@ -93,36 +136,46 @@ ids = shuffle(1:Ns0)
 train_set = dat1[:, ids[1:3500]]
 test_set  = dat1[:, ids[3501:end]]
 
-### alternative pour test
+# mean( diff(dat1,1) .== 0. ) # pas de mouv dans 80% des cas
+# sum( diff(dat1,1), 2 )
+# data_values(x=[1.:49;], y=dtir) +
+#      mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y)
 
-train_set = 0.5 * ones(50,500)
-train_set .+= cumsum(rand(Normal(0.,0.01),50,500),1)
-clamp!(train_set, 0.001, 0.999)
 
-test_set  = 0.5 * ones(50,100)
-test_set .+= cumsum(rand(Normal(0.,0.01),50,100),1)
-clamp!(test_set, 0.001, 0.999)
 
 ### alternative pour test
 
-function draw()
-    if rand() > 0.5
-        xs = sin.( linspace(0,pi,50) )
-    else
-        x0 = rand()
-        xs = x0 * exp.( linspace(0,-3,50) )
-    end
-    xs += cumsum(rand(Normal(0.,0.01), 50))
-    clamp!(xs, 0.001, 0.999)
-    xs
+begin
+  train_set = 0.5 * ones(50,500)
+  train_set .+= cumsum(rand(Normal(0.,0.01),50,500),1)
+  clamp!(train_set, 0.001, 0.999)
+
+  test_set  = 0.5 * ones(50,100)
+  test_set .+= cumsum(rand(Normal(0.,0.01),50,100),1)
+  clamp!(test_set, 0.001, 0.999)
 end
 
-train_set = hcat( [draw() for i in 1:500]... )
+### alternative pour test
 
-test_set = hcat( [draw() for i in 1:100]... )
+begin
+  function draw()
+      if rand() > 0.5
+          xs = sin.( linspace(0,pi,50) )
+      else
+          x0 = rand()
+          xs = x0 * exp.( linspace(0,-3,50) )
+      end
+      xs += cumsum(rand(Normal(0.,0.01), 50))
+      clamp!(xs, 0.001, 0.999)
+      xs
+  end
 
-mean(train_set)
+  train_set = hcat( [draw() for i in 1:500]... )
 
+  test_set = hcat( [draw() for i in 1:100]... )
+
+  mean(train_set)
+end
 ######
 
 
@@ -133,8 +186,9 @@ Ns = size(train_set,2)
 
 ############  model
 
-pars₀ = Pars(Nh, Nd, Ne)
-scal!(pars₀, 0.1)
+pars₀ = RNADE.Pars(Nh, Nd, Ne)
+RNADE.scal!(pars₀, 0.00001)
+RNADE.init(pars₀)
 score(pars₀, train_set, xloglik)
 score(pars₀, test_set, xloglik)
 parss = Pars[]
@@ -144,50 +198,192 @@ parss = Pars[]
 #            kscale=1e-3, cbinterval=25, k0=1e-2)
 
 pars = sgd(pars₀,
-           maxtime=300, chunksize=100, maxsteps=100000,
-           kscale=1e-3, cbinterval=25, k0=2e-3)
+           maxtime=30, chunksize=91, maxsteps=100000,
+           kscale=1., cbinterval=25, k0=2e-2)
+push!(parss, deepcopy(pars))
 
+maximum(pars)
 
-score(pars, train_set, xloglik)
-score(pars, test_set, xloglik)
+extrema(pars.W)
+extrema(pars.c)
+extrema(pars.Vs[40])
+extrema(pars.bs[50])
 
+xs = [0., 0., 0.1, 0.1]
+  nx = length(xs)
+  a  = copy(pars.c)
+  ll  = 0.
+  xt = Array(Float64, nx)
+  h  = Array(Float64, Nh, nx)
+  cpars = Array(Float64, Ne, 3)
+  for i in 1:nx # i = 1
+    h[:,i] .= RNADE.sigm.(a)
+    # h[:,i] .= max.(0., a)
+
+    cpars = reshape(pars.bs[i] .+ pars.Vs[i] * h[:,i], Ne, 3)
+
+    xt[i] = Model.loglik(cpars, xs[i], (i==1) ? xs[1] : xs[i-1])
+    ll += xt[i]
+    a  .+= pars.W[:,i] * xs[i]
+  end
+
+py = Float64[]
+  cn = String[]
+  px = linspace(0., 1., 1000)
+  append!(py, map(x -> exp(-Model.loglik(cpars, x, 0.1)), px))
+  append!(cn, ["x₀ = 0.1"])
+
+  data_values(x=repeat(px, outer=length(cn)), y=vec(py), col=repeat(cn, inner=1000)) +
+    mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
+    encoding_color_nominal(:col)
+
+cpars2 = copy(cpars)
+cpars2[5:7,3] = -100
+py = Float64[]
+  cn = String[]
+  px = linspace(0., 1., 1000)
+  append!(py, map(x -> exp(-Model.loglik(cpars2, x, 0.1)), px))
+  append!(cn, ["x₀ = 0.1"])
+
+  data_values(x=repeat(px, outer=length(cn)), y=vec(py), col=repeat(cn, inner=1000)) +
+    mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
+    encoding_color_nominal(:col)
+
+pars = sgd(pars,
+           maxtime=120, chunksize=100, maxsteps=100000,
+           kscale=0.2, cbinterval=25, k0=1e-3)
+push!(parss, deepcopy(pars))
+
+pars = sgd(pars,
+           maxtime=120, chunksize=100, maxsteps=100000,
+           kscale=0.1, cbinterval=25, k0=1e-3)
 push!(parss, deepcopy(pars))
 
 
-# a,b = exp(), sigmoide : 400 : α = 0.333, train : -85.5, test : -86.1
-# a,b = exp(), sigmoide + points 0,x,1 : 500 : α = 0.286, train : -273.6, test : -266.1
+pars = sgd(pars,
+          maxtime=1000, chunksize=10, maxsteps=100000,
+          kscale=1., cbinterval=250, k0=1e-5)
+push!(parss, deepcopy(pars))
+
+pars = sgd(pars,
+          maxtime=300, chunksize=10, maxsteps=100000,
+          kscale=0.1, cbinterval=250, k0=1e-5)
+push!(parss, deepcopy(pars))
+
+
+# setup15 : -183.3
+# setup16 : -263.7, mais moyenne en-dessous !
+
+
+# 60s, 2e-1 : 450 : α = 0.526, train : -202.2, test : -202.4
+# 60s, 1e-1 : 475 : α = 0.513, train : -202.2, test : -202.4
+# 60s, 1e-2 : 450 : α = 0.526, train : 53.5, test : 53.3
+
+
+# 60s, 2e-1, chunk=1 : 42500 : α = 0.012, train : -202.0, test : -202.2
+# 60s, 1e0, chunk=1, k0=2e-5 30000 : α = 0.625, train : -162.8, test : -162.8
+
+# Avec pars0 écrasé
+# 60s, 1e0, chunk=100, k0=2e-3 : 250 : α = 0.667, train : -180.4, test : -180.5
+# 60s, 1e-1, chunk=100, k0=2e-3 : 225 : α = 0.69, train : -196.9, test : -197.2
+
+# Avec pars0 normal
+# 60s, 1e-1, chunk=100, k0=2e-3 : 225 : α = 0.69, train : -200.7, test : -201.0
+# 60s, 1e-1, chunk=100, k0=2e-3 : 225 : α = 0.69, train : -200.0, test : -200.2
+
+# Avec pars0 normal + regul fac = 10.
+# 60s, 1e-1, chunk=100, k0=2e-3 : 225 : α = 0.69, train : -148.1, test : -148.1
+
+# Avec pars0 normal + regul fac = 0.
+# 60s, 1e-1, chunk=100, k0=2e-3 : 200 : α = 0.714, train : -214.9, test : -215.1
+
+
 
 plot_avg(train_set[:,1:500], parss)
-
 plot_avg(train_set[:,1:500], parss[end:end])
 plot_ex(parss[end], 5)
 
 plot_avg2(train_set[:,1:500], parss[end:end], [0.5,0.5,0.5,0.5])
 
 
-pars = sgd(pars,
-           maxtime=120, chunksize=100,
-           kscale=1e-1, cbinterval=25, k0=5e-3)
 
-push!(parss, deepcopy(pars))
+########## avec average du modèle sur plus d'échantillons
+py = Float64[]
+  cn = String[]
 
-pars = sgd(pars,
-           maxtime=300, chunksize=100,
-           kscale=1e-5, cbinterval=25, k0=5e-3)
+  nbexamples = size(train_set,2)
 
-push!(parss, deepcopy(pars))
+  # sdv = vec(mapslices(std, train_set[:,1:nbexamples], 2))
+  mea = vec(mapslices(mean, train_set[:,1:nbexamples], 2))
+  # append!(py, mea + 0.5 * sdv)
+  # append!(cn, ["upper"])
+  # append!(py, mea - 0.5 * sdv)
+  # append!(cn, ["lower"])
+  append!(py, mea)
+  append!(cn, ["mean"])
 
-pars = sgd(pars,
-           maxtime=60, chunksize=100,
-           kscale=1e-3, cbinterval=25, k0=5e-3)
+  pm = zeros(Nd)
+  for i in 1:10
+    for j in 1:nbexamples
+      pm .+= xsample(train_set[1:10,j], parss[end])[1]
+    end
+  end
+  pm ./= 10nbexamples
+  append!(py, pm)
+  append!(cn, ["simul x10"])
 
-push!(parss, deepcopy(pars))
+  px = linspace(0., 1., Nd)
+  data_values(x=repeat(px, outer=length(cn)), y=vec(py), col=repeat(cn, inner=Nd)) +
+    mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
+    encoding_color_nominal(:col)
+
+
+########## avec average du modèle sur plus d'échantillons
+py = Float64[]
+  cn = String[]
+
+  nbexamples = size(train_set,2)
+
+  pm = zeros(Nd)
+  for i in 1:10
+    for j in 1:nbexamples
+      pm .+= xsample([1., 1., 1., 1., 1., 0., 0., 0., 0., 0.], parss[end])[1]
+    end
+  end
+  pm ./= 10nbexamples
+  append!(py, pm)
+  append!(cn, ["bump puis zéro"])
+
+  pm = zeros(Nd)
+  for i in 1:10
+    for j in 1:nbexamples
+      pm .+= xsample([1., 1., 1., 1., 1., 1., 1., 1., 0., 0.], parss[end])[1]
+    end
+  end
+  pm ./= 10nbexamples
+  append!(py, pm)
+  append!(cn, ["gros bump puis zéro"])
+
+  pm = zeros(Nd)
+  for i in 1:10
+    for j in 1:nbexamples
+      pm .+= xsample(zeros(10), parss[end])[1]
+    end
+  end
+  pm ./= 10nbexamples
+  append!(py, pm)
+  append!(cn, ["zéro"])
+
+  px = linspace(0., 1., Nd)
+  data_values(x=repeat(px, outer=length(cn)), y=vec(py), col=repeat(cn, inner=Nd)) +
+    mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
+    encoding_color_nominal(:col)
 
 
 ##############  drawing
 
 spars = deepcopy(pars)
-score_train(spars)
+score(spars, train_set)
 using JLD
 save("/home/fred/spars1.jld", "spars", spars)
 
@@ -195,7 +391,7 @@ xs2, lls, ll = xsample([0.], spars)
 
 
 #### à partir de t₀ = 0
-function plot_ex(pars, nbexamples)
+function plot_ex{Nh,Nd,Ne}(pars::Pars{Nh,Nd,Ne}, nbexamples)
   nbexamples = 5
   px = linspace(0., 1., Nd) * ones(nbexamples)'
   py = similar(px)
@@ -229,6 +425,9 @@ function plot_avg(train_set, parss)
     mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
     encoding_color_nominal(:cn)
 end
+
+
+
 
 ########### moyenne 2
 function plot_avg2(train_set, parss, starts)
@@ -354,3 +553,6 @@ end
 data_values(x=vec(px), y=vec(py), cn=repeat([1:nbexamples;], inner=[Nd])) +
       mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
       encoding_color_ord(:cn)
+
+
+end  # of module
