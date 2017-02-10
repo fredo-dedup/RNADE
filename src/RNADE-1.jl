@@ -1,9 +1,18 @@
 ############## RNADE param type definition ####################
 
+# module RNADE
+# end
+#
+
+
 module RNADE
 
 using Distributions
-# using DModel
+using BenchmarkTools
+
+# include("distrib-model-3.jl")
+# using RNADE.DModel
+
 using ..DModel
 
 #### RNADE parameters type definitions  #######################
@@ -254,10 +263,8 @@ end
 #
 # xloglik(xs, pars)
 # xdloglik!(xs, pars, dpars)
-# dpars.c[1]
-# dpars.c
 
-# profiling #################
+####### profiling #################
 
 # Profile.clear()
 # Base.@profile collect(xdloglik!(rand(50), pars, dpars) for i in 50:5000)
@@ -266,6 +273,10 @@ end
 # @time collect(xdloglik!(rand(50), pars, dpars) for i in 50:500)
 # 0.46s  (vs 0.27 best pour Kuma)
 # 0.12s
+
+# @benchmark xdloglik!(xs, pars, dpars)
+# 136 μs - with immutable PDIST
+# 130 μs - with type PDIST
 
 
 ###############  testing ########################

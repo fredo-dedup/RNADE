@@ -4,31 +4,32 @@
 #
 #############################################################################
 
-module Trying
-end
-
-
-
-module Trying
+workspace()
 
 using VegaLite
-# using JLD
+using JLD
+using BenchmarkTools
 
-# include("distrib-model-1.jl")
-include("distrib-model-3.jl")
-include("RNADE-1.jl")
+include("RNADE-2.jl")
+using RNADE
 
-import .RNADE: Pars
-# import .RNADE: zeros!, scal!, clamp!, add!, maximum
+include("model-bernstein-1.jl")
 
-score(pars::Pars, dat, f=RNADE.xloglik) = mean(f(dat[:,j], pars)[1] for j in 1:size(dat,2))
-# score_train(pars::Pars) = score(pars, train_set)
-# score_test(pars::Pars) =  score(pars, test_set)
 
+xs = rand(50)
+pars = Pars(Bernstein(5), 10, 50)
+dpars = Pars(Bernstein(5), 10, 50)
+RNADE.init(pars)
+@benchmark RNADE.xdloglik!(xs, pars, dpars)
+# 120 μs - with type PDIST
+# 189 μs - with module RNADE cleanup
+
+
+score(pars::Pars, dat, f=xloglik) = mean(f(dat[:,j], pars)[1] for j in 1:size(dat,2))
 
 function sgd(pars₀;
-             f::Function = RNADE.xloglik,
-             df!::Function = RNADE.xdloglik!,
+             f::Function = xloglik,
+             df!::Function = xdloglik!,
              dat  = train_set,
              datt = test_set,
              maxtime=10, maxsteps=1000, chunksize=100,
@@ -77,13 +78,13 @@ end
 
 
 #### à partir de t₀ = 0
-function plot_ex{Nh,Nd,Ne}(pars::Pars{Nh,Nd,Ne}, nbexamples)
+function plot_ex{Nh,Nd}(pars::Pars{Nh,Nd}, nbexamples)
   # nbexamples = 5
   px = linspace(0., 1., Nd) * ones(nbexamples)'
   py = similar(px)
 
   for i in 1:nbexamples
-    py[:,i] = RNADE.xsample([0., 0., 0.], pars)[1]
+    py[:,i] = xsample([0., 0., 0.], pars)[1]
   end
 
   data_values(x=vec(px), y=vec(py), cn=repeat([1:nbexamples;], inner=[Nd])) +
@@ -98,18 +99,23 @@ function plot_avg(train_set, parss, nbstart=10, oversample=10)
   cn = repeat(["real"; ["simul$i" for i in 1:length(parss)]], inner=Nd)
 
   # subset of examples defined at least up to nbstart
+  # nbstart = 30
   korrect = vec(mapslices(v -> all( x != -1. for x in v ), train_set[1:nbstart,:], 1))
   ikorrect = findin(korrect, [true])
   nbkorrect = length(ikorrect)
+
+  showall(train_set[1:nbstart,1])
+  all( x != -1. for x in train_set[1:nbstart,1] )
+  collect( x != -1. for x in train_set[1:nbstart,1] )
 
   # mean drawn over subset
   pm[:,1] = [ mean( x for x in train_set[i,korrect] if x != -1. ) for i in 1:size(train_set,1) ] # moyenne training set
 
   # drawings from distributions
-  for (i,p) in enumerate(parss) # i, p = 1, parss[1]
+  for (i,p) in enumerate(parss) # i, p = 1, parss[2]
     for j in ikorrect  # j = 1
-      for k in 1:oversample  # j = 1
-        pm[:,i+1] .+= RNADE.xsample(train_set[1:nbstart,j], p)[1]
+      for k in 1:oversample  # j = 3
+        pm[:,i+1] .+= xsample(train_set[1:nbstart,j], p)[1]
       end
     end
     pm[:,i+1] ./= nbkorrect * oversample
@@ -126,6 +132,7 @@ end
 
 dat0 = readdlm("c:/temp/rcf_matrix2.csv", header=false)
 dat1 = Float64[ x == "NA" ? -1. : x for x in dat0 ]
+# save("c:/temp/rcf_matrix2.jld", "dat1", dat1)
 
 # split train / test
 Nd = size(dat1,1)
@@ -145,15 +152,15 @@ test_set  = dat1[:, ids[3501:end]]
 ############  model
 Ns = size(train_set,2)
 Nh = 10
-Ne = 5
+dist = Bernstein(5)
 
-pars₀ = RNADE.Pars(Nh, Nd, Ne)
+pars₀ = Pars(dist, Nh, Nd)
 # RNADE.scal!(pars₀, 0.)
 RNADE.init(pars₀)
 score(pars₀, train_set)
 score(pars₀, test_set)
 parss = Pars[]
-push!(parss, deepcopy(pars₀))
+# push!(parss, deepcopy(pars₀))
 
 pars = sgd(pars₀,
            maxtime=10, chunksize=100, maxsteps=100000,
@@ -162,7 +169,7 @@ push!(parss, deepcopy(pars))
 
 pars = sgd(pars,
            maxtime=10, chunksize=100, maxsteps=100000,
-           kscale=0.1, cbinterval=10, k0=1e-3)
+           kscale=0.5, cbinterval=10, k0=1e-3)
 push!(parss, deepcopy(pars))
 
 pars = sgd(pars,
@@ -171,7 +178,15 @@ pars = sgd(pars,
 push!(parss, deepcopy(pars))
 
 plot_avg(train_set, parss)
-plot_avg(train_set, parss, 25)
+save("c:/temp/pars.jld", "calc2", pars)
+
+jldopen(file -> write(file, "calc3", pars), "c:/temp/pars2.jld", "r+")
+
+sd = load("c:/temp/pars2.jld")
+
+sda = collect(values(sd))
+typeof(sda)
+plot_avg(train_set, collect(values(sd)), 0)
 
 plot_ex(parss[end], 3)
 

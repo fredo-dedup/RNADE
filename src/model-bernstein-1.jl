@@ -1,58 +1,44 @@
-################################################################
-#
-#  using Bernstein polynomials
-#  with with no dirac on 0, x0 and 1
-#
-################################################################
-
-module DModel
 
 using Distributions
-# using VegaLite
-# using ReverseDiffSource
 
-import Distributions: pdf, logpdf, rand
-export logpdf, dlogpdf!, PDist, rand, updatePDist!
+import RNADE: length, rand, logpdf, dlogpdf!, update!
+# import RNADE.NADEDistribution
 
-# calculates normalized probability weights & jacobian
-function _updatePDIST!(uw::Vector{Float64}, w::Vector{Float64}, dw::Matrix{Float64})
-  ew = exp(uw)
-  ewp1 = 1.0 .+ ew
-  w2 = log(ewp1)
-  sw2 = sum(w2)
-  copy!(w, w2 ./ sw2)
-
-  copy!(ew, ew ./ ewp1 ./ sw2)  # mem reuse
-  for i in 1:length(uw)
-    for j in 1:length(uw)
-      dw[i,j] = ew[i] * ( Float64(i==j) - w[j] )
-    end
-  end
-
-  # copy!(dw, ew ./ ewp1 ./ sw2 .* ( eye(length(uw)) .- w' ))
-end
-
-# distrib type
-immutable PDist
+type Bernstein <: NADEDistribution
   w::Vector{Float64}
   dw::Matrix{Float64}
   binom::Vector{Float64}
   N::Int
+  x₀::Float64
 
-  function PDist(uw::Vector{Float64})
-    N = length(uw)
+  function Bernstein(n::Int)
+    N = n
     binom = Float64[binomial(N-1,i-1) for i in 1:N]
     w = Array(Float64, N)
     dw = Array(Float64, N, N)
-    _updatePDIST!(uw, w, dw)
-
-    new(w, dw, binom, N)
+    new(w, dw, binom, N, 0.)
   end
 end
 
+length(d::Bernstein) = d.N
 
-#  weights update
-updatePDist!(d::PDist, uw::Vector{Float64}) = _updatePDIST!(uw, d.w, d.dw)
+function update!(d::Bernstein, uw::Vector{Float64}, x₀=0.)
+  d.x₀ = x₀
+
+  ew = exp(uw)
+  ewp1 = 1.0 .+ ew
+  w2 = log(ewp1)
+  sw2 = sum(w2)
+  copy!(d.w, w2 ./ sw2)
+
+  copy!(ew, ew ./ ewp1 ./ sw2)  # mem reuse
+  for i in 1:length(uw)
+    for j in 1:length(uw)
+      d.dw[i,j] = ew[i] * ( Float64(i==j) - d.w[j] )
+    end
+  end
+end
+
 
 # pd = PDist([-1., 0., 1., 5.])
 # pd.dw * ones(4)
@@ -179,7 +165,7 @@ end
 
 
 
-############## full model (continuous part + steps at 0, 1. and x0  #################
+############## rand() definition  #################
 
 #  cdf tables for quick inverse cdf calculations
 bern(x::Float64, i::Int, n::Int) = (n+1) * binomial(n,i) * x^i * (1. - x)^(n-i)
@@ -226,11 +212,11 @@ for n in 0:10
   end
 end
 
-i, n = 0,0
-ibern.(ticdf[(n,i)],i,n)
+# i, n = 0,0
+# ibern.(ticdf[(n,i)],i,n)
 
 # pick a value
-function rand(d::PDist, x₀::Float64)
+function rand(d::Bernstein)
   ci = rand(Categorical(d.w))
   ticdf[(d.N-1, ci-1)][rand(1:101)]
 end
@@ -243,19 +229,21 @@ end
 # end
 
 
-####### loglik definitions w/  #######################################
+####### loglik definitions  #######################################
 
 const pwidth = 1e-2
 
-function logpdf(d::PDist, x::Float64, x₀::Float64)
+function logpdf(d::Bernstein, x::Float64)
   # x = 0.35 ; d = pd ; x₀ = 0.2
   pm = fp(x, d.w, d.binom)
-
   -log(pm)
 end
 
-# logpdf(pd, 0.9, 0.5)
 
+d = Bernstein(5)
+update!(d, rand(Normal(), length(d)), 0.5)
+d
+# logpdf(pd, 0.9, 0.5)
 # uw = rand(Normal(),4)
 # pd = PDist(uw)
 # quadgk( x -> exp(-logpdf(pd, x, 0.2)), 0., 1.)
@@ -263,7 +251,7 @@ end
 
 
 # x, x₀ = 0.5, 0.
-function dlogpdf!(d::PDist, x::Float64, x₀::Float64, duw::Vector{Float64})
+function dlogpdf!(d::Bernstein, x::Float64, duw::Vector{Float64})
   pm = dfp!(x, d.w, d.binom, duw)
   copy!(duw, - d.dw * duw ./ pm)
 end
@@ -272,19 +260,22 @@ end
 #####  testing
 if false
 
-δ = 1e-8
 function dtest(uw, x, x₀, index)
   # x, x₀, index = 0.5, 0.5, 3
+  δ = 1e-8
   w0 = getindex(uw, index)
-  d0 = PDist(uw)
+  d0 = Bernstein(length(uw))
+  update!(d0, uw, x₀)
+
   uw1 = copy(uw)
   setindex!(uw1, w0+δ, index)
-  d1 = PDist(uw1)
+  d1 = Bernstein(length(uw1))
+  update!(d1, uw1, x₀)
 
-  ed = (logpdf(d1, x, x₀) - logpdf(d0, x, x₀)) / δ
+  ed = (logpdf(d1, x) - logpdf(d0, x)) / δ
 
   duw = Array(Float64, length(uw))
-  dlogpdf!(d0, x, x₀, duw)
+  dlogpdf!(d0, x, duw)
   ed0 = getindex(duw, index)
   ( ed0, ed )
 end
@@ -334,5 +325,3 @@ dtest(uw, 1., 1.0, 5)
 dtest(uw, 1., 1.0, 6)
 
 end
-
-end # module
