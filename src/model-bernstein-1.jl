@@ -1,8 +1,10 @@
+#########################################################################
+#  Distribution defined with Berstein polynomials
+#########################################################################
 
 using Distributions
 
-import RNADE: length, rand, logpdf, dlogpdf!, update!
-# import RNADE.NADEDistribution
+import .RNADE: length, rand, logpdf, dlogpdf!, update!
 
 type Bernstein <: NADEDistribution
   w::Vector{Float64}
@@ -200,7 +202,7 @@ function findx(target::Float64, x₀::Float64, i::Int, n::Int; tol=1e-5)
 end
 
 ticdf = Dict{Tuple{Int,Int}, Array{Float64,1}}()
-for n in 0:10
+for n in 0:20
   for i in 0:n
     x₀ = 0.5
     xs = Array(Float64, 101)

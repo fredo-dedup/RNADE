@@ -4,14 +4,18 @@
 #
 #############################################################################
 
-workspace()
+module Try
+end
+
+
+module Try
 
 using VegaLite
 using JLD
 using BenchmarkTools
 
 include("RNADE-2.jl")
-using RNADE
+using .RNADE
 
 include("model-bernstein-1.jl")
 
@@ -20,61 +24,9 @@ xs = rand(50)
 pars = Pars(Bernstein(5), 10, 50)
 dpars = Pars(Bernstein(5), 10, 50)
 RNADE.init(pars)
-@benchmark RNADE.xdloglik!(xs, pars, dpars)
+@benchmark xdloglik!(xs, pars, dpars)
 # 120 μs - with type PDIST
 # 189 μs - with module RNADE cleanup
-
-
-score(pars::Pars, dat, f=xloglik) = mean(f(dat[:,j], pars)[1] for j in 1:size(dat,2))
-
-function sgd(pars₀;
-             f::Function = xloglik,
-             df!::Function = xdloglik!,
-             dat  = train_set,
-             datt = test_set,
-             maxtime=10, maxsteps=1000, chunksize=100,
-             kscale=1e-4, cbinterval=100, k0=1e-3)
-
-    α    = 1.      # acceleration parameter
-    starttime = time()
-    datiter = cycle(1:size(dat,2))
-    datstate = start(datiter)
-
-    pars   = deepcopy(pars₀)
-    dparsi = deepcopy(pars)
-    dpars  = deepcopy(pars)
-
-    for t in 1:maxsteps
-        if (maxtime != 0) && (time() - starttime > maxtime)
-            break
-        end
-
-        RNADE.zeros!(dpars)
-        for i in 1:chunksize
-            yi, datstate = next(datiter, datstate)
-            RNADE.add!(dpars, df!(dat[:,yi], pars, dparsi) )
-        end
-        dmax = RNADE.maximum(dpars)
-        (100./dmax < α*kscale/chunksize) && print("+")
-        RNADE.scal!(dpars, - min(100./dmax, α*kscale/chunksize))
-        # clamp!(scal!(dpars, -α*kscale/chunksize), -1., 1.)
-        RNADE.add!(pars, dpars)
-        α = 1. / (1 + t*k0)
-
-        if any(isnan(pars.c))
-          break
-        end
-
-        # callback
-        if cbinterval > 0 && t % cbinterval == 0
-            ll  = score(pars,  dat, f)
-            llt = score(pars, datt, f)
-            println("$t : α = $(round(α,3)), train : $(round(ll,1)), test : $(round(llt,1))")
-        end
-    end
-
-    pars
-end
 
 
 #### à partir de t₀ = 0
@@ -148,11 +100,34 @@ test_set  = dat1[:, ids[3501:end]]
 #      mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y)
 
 
+###########  alternate data
+
+begin
+  Nd = 50
+
+  function draw()
+      if rand() > -0.5
+          xs = sin.( linspace(0,pi,Nd) )
+      else
+          x0 = rand()
+          xs = x0 * exp.( linspace(0,-3,Nd) )
+      end
+      xs += cumsum(rand(Normal(0.,0.01), Nd))
+      clamp!(xs, 0., 1.)
+  end
+
+  train_set = hcat( [draw() for i in 1:500]... )
+  test_set = hcat( [draw() for i in 1:100]... )
+
+  mean(train_set)
+  extrema(train_set)
+end
+
 
 ############  model
 Ns = size(train_set,2)
-Nh = 10
-dist = Bernstein(5)
+Nh = 5
+dist = Bernstein(15)
 
 pars₀ = Pars(dist, Nh, Nd)
 # RNADE.scal!(pars₀, 0.)
@@ -162,9 +137,9 @@ score(pars₀, test_set)
 parss = Pars[]
 # push!(parss, deepcopy(pars₀))
 
-pars = sgd(pars₀,
+pars = sgd(pars₀, train_set, test_set,
            maxtime=10, chunksize=100, maxsteps=100000,
-           kscale=1., cbinterval=10, k0=1e-2)
+           kscale=10., cbinterval=10, k0=1e-2)
 push!(parss, deepcopy(pars))
 
 pars = sgd(pars,
@@ -191,3 +166,7 @@ plot_avg(train_set, collect(values(sd)), 0)
 plot_ex(parss[end], 3)
 
 plot_avg2(train_set[:,1:500], parss[end:end], [0.5,0.5,0.5,0.5])
+
+
+
+end # of module Try

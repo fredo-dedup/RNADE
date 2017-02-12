@@ -16,6 +16,7 @@ import Distributions: logpdf
 export NADEDistribution, length, rand, logpdf, dlogpdf!, update!
 export Pars
 export xsample, xdloglik!, xloglik
+export score, sgd
 
 # TODO : document
 function length(d::NADEDistribution)
@@ -262,10 +263,8 @@ function xsample{Nh,Nd}(xs::Vector{Float64}, pars::Pars{Nh,Nd})
 
     A_mul_B!(vcpars[i], pars.Vs[i], h[i])
     vcpars[i] .+= pars.bs[i]
-    update!(pars.dist, vcpars[i])
-
-    prevxt = (i==1) ? xs[1] : xs[i-1]
-    xt[i] = logpdf(pars.dist, xs[i], prevxt)
+    update!(pars.dist, vcpars[i], (i==1) ? 0. : xs[i-1])
+    xt[i] = logpdf(pars.dist, xs[i])
     ll += xt[i]
 
     a  .+= pars.W[:,i] * xs[i]
@@ -279,12 +278,12 @@ function xsample{Nh,Nd}(xs::Vector{Float64}, pars::Pars{Nh,Nd})
 
     A_mul_B!(vcpars[i], pars.Vs[i], h[i])
     vcpars[i] .+= pars.bs[i]
-    update!(pars.dist, vcpars[i])
+    update!(pars.dist, vcpars[i], xs2[i-1])
 
     # pick component
-    xs2[i] = rand(pars.dist, xs2[i-1])
+    xs2[i] = rand(pars.dist)
 
-    xt[i] = logpdf(pars.dist, xs2[i], xs2[i-1])
+    xt[i] = logpdf(pars.dist, xs2[i])
     ll += xt[i]
     a  .+= pars.W[:,i] * xs2[i]
   end
@@ -400,5 +399,58 @@ if false
   dtest(v0, pars, dpars, :c, 9)
 
 end
+
+
+########### SGD optimization  ##############################
+
+score(pars::Pars, dat) = mean(xloglik(dat[:,j], pars)[1] for j in 1:size(dat,2))
+
+function sgd(pars₀,
+             dat,
+             datt;
+             maxtime=10, maxsteps=1000, chunksize=100,
+             kscale=1e-4, cbinterval=100, k0=1e-3)
+
+    α    = 1.      # acceleration parameter
+    starttime = time()
+    datiter = cycle(1:size(dat,2))
+    datstate = start(datiter)
+
+    pars   = deepcopy(pars₀)
+    dparsi = deepcopy(pars)
+    dpars  = deepcopy(pars)
+
+    for t in 1:maxsteps
+        if (maxtime != 0) && (time() - starttime > maxtime)
+            break
+        end
+
+        zeros!(dpars)
+        for i in 1:chunksize
+            yi, datstate = next(datiter, datstate)
+            add!(dpars, xdloglik!(dat[:,yi], pars, dparsi) )
+        end
+        dmax = maximum(dpars)
+        (100./dmax < α*kscale/chunksize) && print("+")
+        scal!(dpars, - min(100./dmax, α*kscale/chunksize))
+        # clamp!(scal!(dpars, -α*kscale/chunksize), -1., 1.)
+        add!(pars, dpars)
+        α = 1. / (1 + t*k0)
+
+        if any(isnan(pars.c))
+          break
+        end
+
+        # callback
+        if cbinterval > 0 && t % cbinterval == 0
+            ll  = score(pars,  dat)
+            llt = score(pars, datt)
+            println("$t : α = $(round(α,3)), train : $(round(ll,1)), test : $(round(llt,1))")
+        end
+    end
+
+    pars
+end
+
 
 end  # end of module RNADE
