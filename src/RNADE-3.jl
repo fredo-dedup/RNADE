@@ -1,4 +1,6 @@
 ############## RNADE param type definition ####################
+## with regul
+
 
 # module RNADE
 # end
@@ -14,7 +16,7 @@ import Base: length, rand
 import Distributions: logpdf
 
 export NADEDistribution, length, rand, logpdf, dlogpdf!, update!
-export Pars
+export Pars, init
 export xsample, xdloglik!, xloglik
 export score, sgd
 
@@ -125,7 +127,7 @@ end
 # TODO : generalize, make user-settable
 sigm(x::Float64) = 1 ./ (1+exp(-x))
 
-# const llp_fac = 0.
+const llp_fac = 1.
 
 #### pre-allocating function #######
 
@@ -173,15 +175,15 @@ function xloglik{Nh,Nd}(xs::Vector{Float64}, pars::Pars{Nh,Nd})
   end
 
   # penalisation
-  # llp = 0.
-  # for i in 1:Nd
-  #   llp += dot(pars.Vs[i],pars.Vs[i])
-  #   llp += dot(pars.bs[i],pars.bs[i])
-  # end
-  # llp += dot(pars.W,pars.W)
+  llp = 0.
+  for i in 1:Nd
+    llp += dot(pars.Vs[i],pars.Vs[i])
+    # llp += dot(pars.bs[i],pars.bs[i])
+  end
+  llp += dot(pars.W,pars.W)
   # llp += dot(pars.c,pars.c)
-  #
-  # ll += llp_fac * llp
+
+  ll += llp_fac * llp
 
   ll, xt, h
 end
@@ -235,11 +237,11 @@ function xdloglik!{Nh,Nd}(xs::Vector{Float64},
   copy!(dpars.c, δa)
 
   # penalisation
-  # for i in 1:Nd
-  #   dpars.Vs[i] += 2 * llp_fac .* pars.Vs[i]
-  #   dpars.bs[i] += 2 * llp_fac .* pars.bs[i]
-  # end
-  # dpars.W += 2 * llp_fac .* pars.W
+  for i in 1:Nd
+    dpars.Vs[i] += 2 * llp_fac .* pars.Vs[i]
+    # dpars.bs[i] += 2 * llp_fac .* pars.bs[i]
+  end
+  dpars.W += 2 * llp_fac .* pars.W
   # dpars.c += 2 * llp_fac .* pars.c
 
   dpars
@@ -433,7 +435,7 @@ function sgd(pars₀,
         end
         dmax = maximum(dpars)
         (1./dmax < α*kscale/chunksize) && print("+")
-        scal!(dpars, - min(100./dmax, α*kscale/chunksize))
+        scal!(dpars, - min(1./dmax, α*kscale/chunksize))
         # clamp!(scal!(dpars, -α*kscale/chunksize), -1., 1.)
         add!(pars, dpars)
         α = 1. / (1 + t*k0)
