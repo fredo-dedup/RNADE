@@ -7,22 +7,27 @@
 module Try
 end
 
+reload("VegaLite")
 
 module Try
 
 using VegaLite
+buttons(false)
+
 using JLD
 using BenchmarkTools
 
 include("RNADE-3.jl")
 using .RNADE
 
-include("model-bernstein-5.jl")
+# include("model-bernstein-5.jl")
+# include("model-bernstein-6.jl")
+include("model-bernstein-7.jl")
 
 
 xs = rand(50)
-pars = Pars(Bernstein5(5), 10, 50)
-dpars = Pars(Bernstein5(5), 10, 50)
+pars = Pars(Bernstein7(5), 10, 50)
+dpars = Pars(Bernstein7(5), 10, 50)
 init(pars)
 @benchmark xdloglik!(xs, pars, dpars)
 # 120 μs - with type PDIST
@@ -57,12 +62,6 @@ function plot_avg(train_set, parss; nbstart=10, oversample=10)
   ikorrect = findin(korrect, [true])
   nbkorrect = length(ikorrect)
 
-  # showall(train_set[1:nbstart,1])
-  # extrema(train_set[1:nbstart, ikorrect])
-  # mean(train_set[1:nbstart, ikorrect],2)
-  # all( x != -1. for x in train_set[1:nbstart,ikorrect] )
-
-
   # mean drawn over subset
   pm[:,1] = [ mean( x for x in train_set[i,korrect] if x != -1. ) for i in 1:size(train_set,1) ] # moyenne training set
 
@@ -79,6 +78,24 @@ function plot_avg(train_set, parss; nbstart=10, oversample=10)
   data_values(x=vec(px), y=vec(pm), cn=cn) +
     mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
     encoding_color_nominal(:cn)
+end
+
+########### moyenne 2
+function plot_avg2(firstvalues, parss; oversample=10)
+  # nbstart = 10
+  px = repeat(linspace(0., 1., Nd), outer=length(parss))
+  pm = zeros(Nd, length(parss))
+
+  # drawings from distributions
+  for (i,p) in enumerate(parss) # i, p = 1, parss[2]
+    for k in 1:oversample  # j = 3
+      pm[:,i] .+= xsample(firstvalues, p)[1]
+    end
+    pm[:,i] ./= oversample
+  end
+
+  data_values(x=vec(px), y=vec(pm)) +
+    mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y)
 end
 
 
@@ -114,16 +131,15 @@ begin
   Nd = 50
 
   function draw()
-      if rand() > -0.5
+      if rand() > 0.5
           xs = 0.1 + 0.5 * sin.( linspace(0,pi,Nd) )
       else
-          x0 = rand()
-          xs = x0 * exp.( linspace(0,-3,Nd) )
+          xs = zeros(Nd)
       end
       xs += cumsum(rand(Normal(0.,0.01), Nd))
-      cens = rand(1:100)
       clamp!(xs, 0., 1.)
-      cens < Nd && ( xs[cens+1:Nd] = -1. )
+      # cens = rand(1:100)
+      # cens < Nd && ( xs[cens+1:Nd] = -1. )
       xs
   end
 
@@ -132,20 +148,26 @@ begin
   train_set = hcat( [draw() for i in 1:500]... )
   test_set = hcat( [draw() for i in 1:100]... )
 
-  mean(train_set)
-  mean( train_set .== -1. )
-  extrema(train_set)
+  # mean(train_set)
+  # mean( train_set .== -1. )
+  # extrema(train_set)
+  train_set
+
+  data_values(x=repeat(linspace(0., 1., Nd), outer=500),
+              y=vec(train_set)) +
+    mark_point() + encoding_x_quant(:x) + encoding_y_quant(:y) +
+    config_mark(opacity=0.1)
 end
 
 
 ############  model
 Ns = size(train_set,2)
-Nh = 2
-dist = Bernstein5(10)
+Nh = 10
+dist = Bernstein7(10)
 
 pars₀ = Pars(dist, Nh, Nd)
 init(pars₀)
-# RNADE.scal!(pars₀, 0.1)
+RNADE.scal!(pars₀, 0.1)
 score(pars₀, train_set)
 score(pars₀, test_set)
 parss = Pars[]
@@ -158,15 +180,27 @@ push!(parss, deepcopy(pars))
 
 pars = sgd(pars, train_set, test_set,
            maxtime=10, chunksize=100, maxsteps=100000,
-           kscale=0.5, cbinterval=10, k0=1e-3)
-push!(parss, deepcopy(pars))
-
-pars = sgd(pars,
-           maxtime=60, chunksize=100, maxsteps=100000,
            kscale=1., cbinterval=10, k0=1e-3)
 push!(parss, deepcopy(pars))
+RNADE.maximum(pars)
 
 plot_avg(train_set, parss, nbstart=10)
+plot_avg2(zeros(10), parss, oversample=1000)
+plot_avg2(0.2*ones(10), parss, oversample=1000)
+
+#  point cloud
+Np = 500 # number of paths
+
+py = vcat([ xsample([ rand() > 0.5 ? 0.2 : 0.], pars)[1] for i in 1:Np]...)
+data_values(x=repeat(linspace(0., 1., Nd), outer=500), y=py) +
+  mark_point() + encoding_x_quant(:x) + encoding_y_quant(:y) +
+  config_mark(opacity=0.1)
+
+plot_ex(parss[end], 3)
+
+
+
+
 # save("c:/temp/pars.jld", "calc2", pars)
 
 # sur 1 exemple
@@ -182,7 +216,6 @@ sd = load("c:/temp/pars2.jld")
 
 plot_avg(train_set, collect(values(sd)), 0)
 
-plot_ex(parss[end], 3)
 
 plot_avg2(train_set[:,1:500], parss[end:end], [0.5,0.5,0.5,0.5])
 
@@ -236,10 +269,10 @@ hcat(fit(Histogram, train_set[1,:], 0:0.1:1.1, closed=:left).weights,
 
 mf(dist) = quadgk(x -> x*fp(x, dist.w, dist.binom), 0., 1.)[1]
 
-target = 0.3
-dist = Bernstein5(20)
+target = 0.4
+dist = Bernstein5(3)
 # β = [1. ; zeros(19)]
-β = rand(Normal(0.,0.1),20)
+β = rand(Normal(0.,0.1),3)
 update!(dist, β, 0.)
 (logpdf(dist, target), mf(dist) )
 
@@ -283,6 +316,10 @@ nc = length(vals[1])
   data_values(x=vec(px), y=vec(pm), cn=cn) +
     mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y) +
     encoding_color_nominal(:cn)
+
+
+data_values(x=collect(1:10), y=sqrt(1:10)) +
+  mark_line() + encoding_x_quant(:x) + encoding_y_quant(:y)
 
 
 

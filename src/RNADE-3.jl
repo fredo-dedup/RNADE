@@ -127,7 +127,7 @@ end
 # TODO : generalize, make user-settable
 sigm(x::Float64) = 1 ./ (1+exp(-x))
 
-const llp_fac = 1.
+const llp_fac = 0.
 
 #### pre-allocating function #######
 
